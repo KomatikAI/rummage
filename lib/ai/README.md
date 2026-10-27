@@ -31,3 +31,19 @@ Lane D: Claude-backed features for Rummage. Everything here is server-only and t
 ## Tests
 
 `npx vitest run lib/ai`. Every test uses fakes; none needs an API key or makes a network call.
+
+## Wiring
+
+The Supabase lane's implementations live in `lib/repos/` and run as the signed-in user (cookie client, RLS), never the service role.
+
+- `SupabaseItemsRepo` (`items-repo.ts`) implements `ItemsRepo` for one sale: search reads `public_listings`, holds and releases call `hold_item` / `release_hold`, the cart reads `carts` + `cart_lines` with titles from `public_listings`.
+- `SupabaseSaleReadRepo` (`sale-read-repo.ts`) implements `SaleReadRepo` from `organizer_sale_summary(p_sale)`, `sales` and `households`. Read-only.
+- `createRepos(saleId, client?)` (`index.ts`) builds both for the current request. Gaps against the schema: `lib/repos/SCHEMA-GAPS.md`.
+
+Routes:
+
+| Route | Body | Returns |
+|---|---|---|
+| `POST /api/assistant/shop` | `{ saleId, messages }` (`useChat` UI messages) | `runShoppingAssistant` as an AI SDK UI-message stream, bound to the buyer's open cart (created if missing). 401 signed out, 404 unknown sale, 409 sale not open or cart at checkout. |
+| `POST /api/assistant/organizer` | `{ saleId, messages }` | `{ text, toolCalls, paypalData }` from `runOrganizerAssistant`; the latest user message is the question. 403 unless `sales.organizer_user_id` is the caller. PayPal read-only tools attach only when `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` are set. |
+| `POST /api/pricing` | JSON `{ imageBase64, mediaType, sellerHint?, saleContext? }` or multipart `image` | The `ListingDraft` from `priceFromPhoto`. 401 signed out, 413 over 5 MB, 422 refusal, 502 unusable reply. The image is never stored. |
