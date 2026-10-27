@@ -4,7 +4,9 @@ import type { CaptureResult, CaptureUnit, OrderResponse } from "@/lib/paypal";
 
 import {
   captureEventToUnitInput,
+  captureRequestId,
   captureResultToUnitInputs,
+  isAlreadyCaptured,
   isCaptureEventType,
   matchCaptureEventUnit,
   parseCaptureEvent,
@@ -212,5 +214,41 @@ describe("capture webhook mapping", () => {
       seller_receivable: 9.41,
     });
     expect(captureEventToUnitInput(event, stored({ reference_id: HH_A, capture_status: "REFUNDED" }))).toBeNull();
+  });
+});
+
+describe("captureRequestId", () => {
+  const CART = "c0000000-0000-4000-8000-000000000001";
+
+  it("is distinct per attempt for the same cart", () => {
+    expect(captureRequestId(CART, 1)).toBe(`capture:${CART}:1`);
+    expect(captureRequestId(CART, 2)).toBe(`capture:${CART}:2`);
+    expect(captureRequestId(CART, 1)).not.toBe(captureRequestId(CART, 2));
+  });
+
+  it("stays inside PayPal's 108-character request id limit", () => {
+    expect(captureRequestId(CART, 2_147_483_647).length).toBeLessThanOrEqual(108);
+  });
+
+  it("rejects an attempt that was never bumped", () => {
+    expect(() => captureRequestId(CART, 0)).toThrow(RangeError);
+    expect(() => captureRequestId(CART, 1.5)).toThrow(RangeError);
+  });
+});
+
+describe("isAlreadyCaptured", () => {
+  const none = (issues: string[]): CaptureResult => ({
+    outcome: "none",
+    orderId: "ORDER-1",
+    units: [],
+    error: { name: "UNPROCESSABLE_ENTITY", message: "x", details: issues.map((issue) => ({ issue })) },
+    raw: undefined,
+  });
+
+  it("is true only for ORDER_ALREADY_CAPTURED on a none outcome", () => {
+    expect(isAlreadyCaptured(none(["ORDER_ALREADY_CAPTURED"]))).toBe(true);
+    expect(isAlreadyCaptured(none(["INSTRUMENT_DECLINED"]))).toBe(false);
+    expect(isAlreadyCaptured({ outcome: "none", orderId: "ORDER-1", units: [], raw: undefined })).toBe(false);
+    expect(isAlreadyCaptured({ outcome: "timeout", orderId: "ORDER-1", units: [], raw: null })).toBe(false);
   });
 });

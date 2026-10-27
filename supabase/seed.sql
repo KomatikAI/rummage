@@ -22,8 +22,14 @@
 --   update public.households set merchant_id_in_paypal = '<sandbox merchant id 3>'
 --    where id = 'b0000000-0000-4000-8000-000000000003';
 --
--- The organizer's donation merchant id starts null (no donation unit offered). Set it
--- after onboarding the organizer's sandbox account:
+-- Donations: the sale is a fundraiser (fundraiser_name is set). There is no
+-- accepts_donations column to seed: public_sales.accepts_donations is computed as
+-- `organizer_merchant_id is not null`, and both the cart's donation picker (canDonate)
+-- and create-order's donation unit (buildCheckoutUnits) require fundraiser_name AND a
+-- non-null organizer_merchant_id, because the unit cannot be built without a payee. The
+-- merchant id starts null on purpose (a placeholder would make the organizer page show
+-- PayPal as linked and send PayPal an unknown payee), so the picker appears as soon as
+-- the organizer links PayPal in the spike, or after setting it by hand:
 --
 --   update public.sales set organizer_merchant_id = '<sandbox organizer merchant id>'
 --    where id = 'a0000000-0000-4000-8000-000000000001';

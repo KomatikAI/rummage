@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { captureResultToUnitInputs, summariseCapture } from "@/lib/checkout/capture-mapping";
+import {
+  captureRequestId,
+  captureResultToUnitInputs,
+  isAlreadyCaptured,
+  summariseCapture,
+} from "@/lib/checkout/capture-mapping";
 import { databaseError, jsonError, paypalErrorResponse, readJsonBody, unauthorized } from "@/lib/checkout/http";
 import { getSignedInUserId } from "@/lib/checkout/session";
 import { captureOrder, resolveTimedOutCapture, type CaptureResult } from "@/lib/paypal";
@@ -18,6 +23,12 @@ const CAPTURABLE: ReadonlySet<CartStatus> = new Set(["checkout", "partial", "pai
 /**
  * POST { orderId } -> { outcome, units: [{ householdId, referenceId, status, captureId? }] }
  * Captures the buyer's approved order and records each unit with mark_units_captured.
+ *
+ * Every call bumps carts.capture_attempts first and sends `capture:<cart>:<attempt>` as
+ * the PayPal-Request-Id, so a retry after a decline is a new request (a reused id may get
+ * PayPal's cached error back). The bump is a compare-and-set on the value just read, so
+ * two concurrent calls for one cart cannot share an attempt: the loser gets a 409. A call
+ * for an order that is already captured (a replay) is answered by reading the order.
  */
 export async function POST(request: Request): Promise<Response> {
   const body = await readJsonBody(request, bodySchema);
@@ -30,7 +41,7 @@ export async function POST(request: Request): Promise<Response> {
   const admin = createSupabaseAdminClient();
   const cart = await admin
     .from("carts")
-    .select("id, buyer_user_id, status")
+    .select("id, buyer_user_id, status, capture_attempts")
     .eq("paypal_order_id", orderId)
     .maybeSingle();
   if (cart.error) return databaseError("load cart", cart.error);
@@ -41,6 +52,19 @@ export async function POST(request: Request): Promise<Response> {
   }
   const cartId = cart.data.id;
 
+  const previousAttempts = cart.data.capture_attempts;
+  const attempt = previousAttempts + 1;
+  const bumped = await admin
+    .from("carts")
+    .update({ capture_attempts: attempt })
+    .eq("id", cartId)
+    .eq("capture_attempts", previousAttempts)
+    .select("id");
+  if (bumped.error) return databaseError("count capture attempt", bumped.error);
+  if (!bumped.data || bumped.data.length === 0) {
+    return jsonError(409, "capture_in_progress", "Another payment attempt for this cart is running. Check your order page.");
+  }
+
   const units = await admin
     .from("purchase_units")
     .select("reference_id, household_id, merchant_id, capture_id, capture_status")
@@ -50,9 +74,10 @@ export async function POST(request: Request): Promise<Response> {
 
   let result: CaptureResult;
   try {
-    // Same id on every retry for this cart and order: PayPal never captures twice.
-    result = await captureOrder(orderId, { requestId: `capture-${cartId}-${orderId}` });
-    if (result.outcome === "timeout") result = await resolveTimedOutCapture(orderId);
+    // A new id per attempt; PayPal still never captures an order twice.
+    result = await captureOrder(orderId, { requestId: captureRequestId(cartId, attempt) });
+    // A timeout, or a replay of a captured order: read the order for the real state.
+    if (result.outcome === "timeout" || isAlreadyCaptured(result)) result = await resolveTimedOutCapture(orderId);
   } catch (error) {
     const mapped = paypalErrorResponse(error, "capture");
     if (mapped) return mapped;

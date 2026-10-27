@@ -7,6 +7,7 @@ Postgres schema, RLS policies, RPC functions and storage for Rummage, managed as
 | `migrations/20261027120000_init.sql` | Tables, indexes, triggers, RLS (enabled and forced on every table), public views, RPC functions |
 | `migrations/20261027120100_storage_item_photos.sql` | The `item-photos` storage bucket and its upload policies |
 | `migrations/20261028090000_schema_gaps.sql` | `sales.fundraiser_goal`, the two PayPal readiness flags on `households`, text results from `hold_item` / `release_hold`, and `paid_order_count` / `fundraiser_goal` in `organizer_sale_summary` |
+| `migrations/20261028100000_capture_attempts.sql` | `carts.capture_attempts`, bumped by the capture route on every call so each PayPal-Request-Id (`capture:<cart>:<attempt>`) is distinct; service role writes only |
 | `seed.sql` | Fictional demo sale in Forest Park, St. Louis: 6 households, 40 items |
 
 The TypeScript side lives in `lib/supabase/` (`types.ts` mirrors the SQL; `schema-sync.test.ts` fails when the two drift).
@@ -25,9 +26,9 @@ supabase db push
 
 ### Option B: SQL editor
 
-Open the project's SQL editor and run the migration files in filename order: `20261027120000_init.sql`, `20261027120100_storage_item_photos.sql`, then `20261028090000_schema_gaps.sql`. Run each file once.
+Open the project's SQL editor and run the migration files in filename order: `20261027120000_init.sql`, `20261027120100_storage_item_photos.sql`, `20261028090000_schema_gaps.sql`, then `20261028100000_capture_attempts.sql`. Run each file once.
 
-The migrations must run as the `postgres` role (the CLI and the SQL editor both do). The SECURITY DEFINER functions rely on that role bypassing RLS, and the init and schema-gaps migrations stop with an error if the role cannot.
+The migrations must run as the `postgres` role (the CLI and the SQL editor both do). The SECURITY DEFINER functions rely on that role bypassing RLS, and the init, schema-gaps and capture-attempts migrations stop with an error if the role cannot.
 
 ## Load the seed
 
@@ -57,14 +58,14 @@ Three seeded households are marked `ready` with the placeholder merchant ids `SA
     where id = 'b0000000-0000-4000-8000-000000000003';  -- The Lindqvist stall
    ```
 
-3. To offer the PTA donation unit, onboard the organizer's sandbox account the same way and set its id:
+3. To offer the PTA donation unit, link the organizer's sandbox account from the organizer page ("Link the PTA's PayPal"), which stores `sales.organizer_merchant_id` once PayPal reports the account ready. Or onboard it the same way as the sellers and set the id by hand:
 
    ```sql
    update public.sales set organizer_merchant_id = '<sandbox organizer merchant id>'
     where id = 'a0000000-0000-4000-8000-000000000001';
    ```
 
-Until step 3 is done, `public_sales.accepts_donations` is false.
+How donations are gated: there is no `accepts_donations` column. `public_sales.accepts_donations` is computed as `organizer_merchant_id is not null`, and both the cart's donation picker (`canDonate` in `components/buyer/sale-info.ts`) and create-order's donation unit (`buildCheckoutUnits` in `lib/checkout/order-units.ts`) need `fundraiser_name` set AND a non-null `organizer_merchant_id`, since the unit cannot be built without a payee. The seeded sale is a fundraiser with the merchant id left null on purpose (a placeholder would show the organizer as linked and send PayPal an unknown payee), so the cart says gifts "are not open for this sale yet" until step 3 and the picker as soon as it is done.
 
 ## Storage
 

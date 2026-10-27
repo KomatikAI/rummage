@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dbFail, fakeDb, fakeSessionClient, jsonRequest, ok, type FakeQuery } from "@/lib/checkout/test-db";
+import { dbFail, eqValue, fakeDb, fakeSessionClient, jsonRequest, ok, type FakeQuery } from "@/lib/checkout/test-db";
 
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: vi.fn() }));
@@ -28,11 +28,25 @@ const storedUnits = [
   { reference_id: H2, household_id: H2, merchant_id: "MERCH2", capture_id: null, capture_status: null },
 ];
 
-function setup(options: { cart?: Record<string, unknown> | null; userId?: string | null; rpcError?: boolean } = {}) {
+type SetupOptions = {
+  cart?: Record<string, unknown> | null;
+  userId?: string | null;
+  rpcError?: boolean;
+  /** What the capture_attempts bump returns: the updated rows, or a database error. */
+  bump?: "ok" | "no_row" | "error";
+};
+
+function setup(options: SetupOptions = {}) {
   const db = fakeDb(
     (q: FakeQuery) => {
+      if (q.table === "carts" && q.action === "update") {
+        if (options.bump === "error") return dbFail();
+        return ok(options.bump === "no_row" ? [] : [{ id: CART }]);
+      }
       if (q.table === "carts") {
-        return ok(options.cart === undefined ? { id: CART, buyer_user_id: BUYER, status: "checkout" } : options.cart);
+        return ok(
+          options.cart === undefined ? { id: CART, buyer_user_id: BUYER, status: "checkout", capture_attempts: 0 } : options.cart,
+        );
       }
       if (q.table === "purchase_units") return ok(storedUnits);
       return undefined;
@@ -78,13 +92,13 @@ describe("POST /api/paypal/capture validation and auth", () => {
   it("404s an order with no cart and 403s another buyer's order", async () => {
     setup({ cart: null });
     expect((await POST(jsonRequest(URL_, { orderId: "ORDER-1" }))).status).toBe(404);
-    setup({ cart: { id: CART, buyer_user_id: "someone-else", status: "checkout" } });
+    setup({ cart: { id: CART, buyer_user_id: "someone-else", status: "checkout", capture_attempts: 0 } });
     expect((await POST(jsonRequest(URL_, { orderId: "ORDER-1" }))).status).toBe(403);
     expect(captureOrder).not.toHaveBeenCalled();
   });
 
   it("409s an open or abandoned cart", async () => {
-    setup({ cart: { id: CART, buyer_user_id: BUYER, status: "abandoned" } });
+    setup({ cart: { id: CART, buyer_user_id: BUYER, status: "abandoned", capture_attempts: 0 } });
     const response = await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "cart_not_in_checkout" });
@@ -104,7 +118,7 @@ describe("POST /api/paypal/capture outcomes", () => {
         { householdId: H2, referenceId: H2, status: "COMPLETED", captureId: "CAP-2" },
       ],
     });
-    expect(captureOrder).toHaveBeenCalledWith("ORDER-1", { requestId: `capture-${CART}-ORDER-1` });
+    expect(captureOrder).toHaveBeenCalledWith("ORDER-1", { requestId: `capture:${CART}:1` });
     expect(db.rpcs).toEqual([
       {
         fn: "mark_units_captured",
@@ -182,5 +196,72 @@ describe("POST /api/paypal/capture outcomes", () => {
     const response = await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
     expect(response.status).toBe(500);
     expect(await response.json()).toMatchObject({ error: "database_error" });
+  });
+});
+
+describe("POST /api/paypal/capture attempts", () => {
+  const declined: CaptureResult = {
+    outcome: "none",
+    orderId: "ORDER-1",
+    units: [],
+    error: { name: "UNPROCESSABLE_ENTITY", message: "declined", details: [{ issue: "INSTRUMENT_DECLINED" }] },
+    raw: undefined,
+  };
+
+  it("bumps capture_attempts with a compare-and-set before calling PayPal", async () => {
+    const db = setup({ cart: { id: CART, buyer_user_id: BUYER, status: "checkout", capture_attempts: 2 } });
+    vi.mocked(captureOrder).mockResolvedValue(completed);
+    await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    const bump = db.queries.find((q) => q.table === "carts" && q.action === "update");
+    expect(bump?.payload).toEqual({ capture_attempts: 3 });
+    expect(eqValue(bump!, "id")).toBe(CART);
+    expect(eqValue(bump!, "capture_attempts")).toBe(2);
+    expect(captureOrder).toHaveBeenCalledWith("ORDER-1", { requestId: `capture:${CART}:3` });
+  });
+
+  it("sends a different request id when a declined capture is retried", async () => {
+    setup({ cart: { id: CART, buyer_user_id: BUYER, status: "checkout", capture_attempts: 0 } });
+    vi.mocked(captureOrder).mockResolvedValueOnce(declined);
+    await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    setup({ cart: { id: CART, buyer_user_id: BUYER, status: "checkout", capture_attempts: 1 } });
+    vi.mocked(captureOrder).mockResolvedValueOnce(completed);
+    await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    const ids = vi.mocked(captureOrder).mock.calls.map((call) => call[1].requestId);
+    expect(ids).toEqual([`capture:${CART}:1`, `capture:${CART}:2`]);
+  });
+
+  it("409s without calling PayPal when another attempt took the count first", async () => {
+    setup({ bump: "no_row" });
+    const response = await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "capture_in_progress" });
+    expect(captureOrder).not.toHaveBeenCalled();
+  });
+
+  it("500s without calling PayPal when the bump fails", async () => {
+    setup({ bump: "error" });
+    const response = await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    expect(response.status).toBe(500);
+    expect(captureOrder).not.toHaveBeenCalled();
+  });
+
+  it("reads the order when PayPal says it was already captured (a replay)", async () => {
+    const db = setup({ cart: { id: CART, buyer_user_id: BUYER, status: "paid", capture_attempts: 1 } });
+    vi.mocked(captureOrder).mockResolvedValue({
+      ...declined,
+      error: { name: "UNPROCESSABLE_ENTITY", message: "done", details: [{ issue: "ORDER_ALREADY_CAPTURED" }] },
+    });
+    vi.mocked(resolveTimedOutCapture).mockResolvedValue(completed);
+    const body = await (await POST(jsonRequest(URL_, { orderId: "ORDER-1" }))).json();
+    expect(resolveTimedOutCapture).toHaveBeenCalledWith("ORDER-1");
+    expect(body.outcome).toBe("completed");
+    expect(db.rpcs).toHaveLength(1);
+  });
+
+  it("does not read the order after a plain decline", async () => {
+    setup();
+    vi.mocked(captureOrder).mockResolvedValue(declined);
+    await POST(jsonRequest(URL_, { orderId: "ORDER-1" }));
+    expect(resolveTimedOutCapture).not.toHaveBeenCalled();
   });
 });

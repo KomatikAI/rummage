@@ -172,6 +172,8 @@ export type CartRow = {
   paypal_order_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Capture calls made for this cart; part of each PayPal-Request-Id. Service role writes. */
+  capture_attempts: number;
 };
 
 export type CartLineRow = {
@@ -547,6 +549,7 @@ export const TABLE_COLUMNS = {
     "paypal_order_id",
     "created_at",
     "updated_at",
+    "capture_attempts",
   ]),
   cart_lines: columns<CartLineRow>()([
     "cart_id",

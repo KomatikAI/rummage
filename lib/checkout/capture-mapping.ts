@@ -111,6 +111,29 @@ export function summariseCapture(
   return { outcome: result.outcome, units };
 }
 
+// ---------------------------------------------------------------- attempts
+
+/**
+ * The PayPal-Request-Id for one capture attempt: `capture:<cart id>:<attempt>`.
+ * `attempt` is carts.capture_attempts after the route bumps it (1 for the first call),
+ * so a retry after a decline is a new request and never replays PayPal's cached error.
+ */
+export function captureRequestId(cartId: string, attempt: number): string {
+  if (!Number.isInteger(attempt) || attempt < 1) {
+    throw new RangeError(`capture attempt must be a positive integer, got ${attempt}`);
+  }
+  return `capture:${cartId}:${attempt}`;
+}
+
+/**
+ * True when PayPal refused the capture because the order was captured already (a
+ * replay with a new request id). The route then reads the order instead.
+ */
+export function isAlreadyCaptured(result: CaptureResult): boolean {
+  if (result.outcome !== "none" || !("error" in result) || !result.error) return false;
+  return result.error.details.some((detail) => detail.issue === "ORDER_ALREADY_CAPTURED");
+}
+
 // ---------------------------------------------------------------- webhooks
 
 export const CAPTURE_EVENT_TYPES = [

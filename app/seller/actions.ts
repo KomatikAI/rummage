@@ -21,7 +21,15 @@ import {
   type NewItemInput,
 } from "@/components/seller/forms";
 import { householdQuery, itemWriteErrorMessage, joinSaleErrorMessage } from "@/components/seller/seller-copy";
+import type { PricingMediaType } from "@/lib/ai/pricing";
+import {
+  detectImageMediaType,
+  screenListing,
+  SCREEN_DEFAULT_REASON,
+  SCREEN_MAX_IMAGE_BYTES,
+} from "@/lib/ai/screen-listing";
 import { currentUserId } from "@/lib/repos/auth";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { ItemStatus } from "@/lib/supabase/types";
 
@@ -71,31 +79,101 @@ export async function joinSale(_previous: JoinSaleState, formData: FormData): Pr
 // New item (the photo is already uploaded by the browser)
 // ---------------------------------------------------------------------------
 
+type ScreenPhoto =
+  | { ok: true; imageBase64: string; mediaType: PricingMediaType }
+  | { ok: false; error: string };
+
+const PHOTO_UNREADABLE = "We could not read that photo to check it. Add the photo again and list it once more.";
+
+/** Reads the uploaded photo back from storage (service role) for the prohibited-item screen. */
+async function readPhotoForScreen(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  photoPath: string,
+): Promise<ScreenPhoto> {
+  const { data, error } = await admin.storage.from(ITEM_PHOTO_BUCKET).download(photoPath);
+  if (error || !data) return { ok: false, error: PHOTO_UNREADABLE };
+  if (data.size > SCREEN_MAX_IMAGE_BYTES) {
+    return { ok: false, error: "That photo is too large to check. Take it again and list it once more." };
+  }
+  const bytes = new Uint8Array(await data.arrayBuffer());
+  const mediaType = detectImageMediaType(bytes);
+  if (!mediaType) return { ok: false, error: PHOTO_UNREADABLE };
+  return { ok: true, imageBase64: Buffer.from(bytes).toString("base64"), mediaType };
+}
+
+/**
+ * Lists a new item. Every listing is screened for prohibited items here, on the server,
+ * whether or not the seller used "Price it" (the browser block stays as the first line).
+ * Sellers cannot write prohibited_flag, so a flagged item is stored with the service role
+ * as a draft carrying the flag and reason (the database refuses to list a flagged item),
+ * and the seller gets a plain error. A screen that could not run lists nothing.
+ */
 export async function createItem(input: NewItemInput): Promise<CreateItemResult> {
   const parsed = newItemSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: "Check the fields marked below.", fieldErrors: fieldErrorsOf(parsed.error) };
   }
 
-  const db = await sellerDb();
-  if (!db) return { ok: false, error: SIGNED_OUT };
+  const db = await createSupabaseServerClient();
+  const userId = await currentUserId(db);
+  if (!userId) return { ok: false, error: SIGNED_OUT };
 
   const item = parsed.data;
+
+  // The service-role writes below bypass RLS, so confirm the seller owns the table first.
+  const household = await db
+    .from("households")
+    .select("id")
+    .eq("id", item.householdId)
+    .eq("owner_user_id", userId)
+    .maybeSingle();
+  if (household.error) return { ok: false, error: "We could not check your table just now. Try again." };
+  if (!household.data) return { ok: false, error: "We could not find your table. Reload the page and try again." };
+
+  const admin = createSupabaseAdminClient();
+  const photo = await readPhotoForScreen(admin, item.photoPath);
+  if (!photo.ok) return { ok: false, error: photo.error };
+
+  const screen = await screenListing({
+    title: item.title,
+    description: item.description,
+    category: item.category,
+    imageBase64: photo.imageBase64,
+    mediaType: photo.mediaType,
+  });
+  if (!screen.checked) {
+    return { ok: false, error: "We could not check this item just now. Try again; your details are still here." };
+  }
+
+  const row = {
+    household_id: item.householdId,
+    title: item.title,
+    description: item.description,
+    category: item.category,
+    condition: item.condition,
+    price: item.price,
+    price_low: item.priceLow,
+    price_high: item.priceHigh,
+    price_reason: item.priceReason,
+    photo_path: item.photoPath,
+  };
+
+  if (screen.prohibited) {
+    const reason = screen.reason ?? SCREEN_DEFAULT_REASON;
+    const flagged = await admin
+      .from("items")
+      .insert({ ...row, status: "draft", prohibited_flag: true, prohibited_reason: reason })
+      .select("id")
+      .single();
+    const refused = `This item cannot be listed at this sale. ${reason}`;
+    if (flagged.error) return { ok: false, error: refused };
+    revalidateSeller();
+    return { ok: false, error: `${refused} We kept it as a draft that buyers cannot see.` };
+  }
+
   const { data, error } = await db
     .from("items")
-    .insert({
-      household_id: item.householdId,
-      title: item.title,
-      description: item.description,
-      category: item.category,
-      condition: item.condition,
-      price: item.price,
-      price_low: item.priceLow,
-      price_high: item.priceHigh,
-      price_reason: item.priceReason,
-      photo_path: item.photoPath,
-      status: "listed",
-    })
+    .insert({ ...row, status: "listed" })
     .select("id")
     .single();
   if (error || !data) return { ok: false, error: itemWriteErrorMessage(error ?? {}) };
