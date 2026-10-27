@@ -20,8 +20,9 @@ export type RefreshResult =
 
 /**
  * Looks the merchant up with PayPal (never trusting browser params), checks the
- * integration belongs to this household's tracking id, then stores the merchant id
- * and status. PayPal errors propagate to the caller.
+ * integration belongs to this household's tracking id, then stores the merchant id,
+ * both PayPal readiness flags and the status derived from them. PayPal errors
+ * propagate to the caller.
  */
 export async function refreshHouseholdOnboarding(
   admin: RummageClient,
@@ -39,6 +40,9 @@ export async function refreshHouseholdOnboarding(
     .update({
       merchant_id_in_paypal: merchantIdInPayPal,
       paypal_status: status,
+      // The two flags behind the status, kept so "pending" can say which one is missing.
+      paypal_payments_receivable: integration.paymentsReceivable,
+      paypal_email_confirmed: integration.primaryEmailConfirmed,
       paypal_checked_at: now.toISOString(),
     })
     .eq("id", household.id);

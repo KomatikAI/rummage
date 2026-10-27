@@ -6,6 +6,7 @@ Postgres schema, RLS policies, RPC functions and storage for Rummage, managed as
 |---|---|
 | `migrations/20261027120000_init.sql` | Tables, indexes, triggers, RLS (enabled and forced on every table), public views, RPC functions |
 | `migrations/20261027120100_storage_item_photos.sql` | The `item-photos` storage bucket and its upload policies |
+| `migrations/20261028090000_schema_gaps.sql` | `sales.fundraiser_goal`, the two PayPal readiness flags on `households`, text results from `hold_item` / `release_hold`, and `paid_order_count` / `fundraiser_goal` in `organizer_sale_summary` |
 | `seed.sql` | Fictional demo sale in Forest Park, St. Louis: 6 households, 40 items |
 
 The TypeScript side lives in `lib/supabase/` (`types.ts` mirrors the SQL; `schema-sync.test.ts` fails when the two drift).
@@ -24,9 +25,9 @@ supabase db push
 
 ### Option B: SQL editor
 
-Open the project's SQL editor and run the two migration files in filename order: first `20261027120000_init.sql`, then `20261027120100_storage_item_photos.sql`. Run each file once.
+Open the project's SQL editor and run the migration files in filename order: `20261027120000_init.sql`, `20261027120100_storage_item_photos.sql`, then `20261028090000_schema_gaps.sql`. Run each file once.
 
-The migrations must run as the `postgres` role (the CLI and the SQL editor both do). The SECURITY DEFINER functions rely on that role bypassing RLS, and the init migration stops with an error if the role cannot.
+The migrations must run as the `postgres` role (the CLI and the SQL editor both do). The SECURITY DEFINER functions rely on that role bypassing RLS, and the init and schema-gaps migrations stop with an error if the role cannot.
 
 ## Load the seed
 
@@ -73,6 +74,24 @@ The bucket `item-photos` is public-read: anyone can load a photo by its public U
 - Seed photos go under `seed/<slug>.jpg`. Upload them with the service role key, for example from a script that uses `lib/supabase/admin.ts`. Client policies do not cover the `seed/` prefix.
 - `items.photo_path` stores the path inside the bucket. The public URL is `<NEXT_PUBLIC_SUPABASE_URL>/storage/v1/object/public/item-photos/<photo_path>`, or `supabase.storage.from("item-photos").getPublicUrl(photo_path)`.
 
+## Hold and release results
+
+`hold_item(item, cart)` and `release_hold(item, cart)` never raise for a refusal. They return a text reason instead; `HOLD_ITEM_RESULTS` and `RELEASE_HOLD_RESULTS` in `lib/supabase/types.ts` list them.
+
+| `hold_item` returns | Meaning |
+|---|---|
+| `held` | Held for 15 minutes, or already in this cart (the hold is refreshed) |
+| `not_allowed` | Signed out, the cart is missing or not the caller's, or the sale is no longer open |
+| `cart_not_open` | The caller's cart is at checkout or finished |
+| `not_found` | No such item in `public_listings` for the cart's sale |
+| `already_held` | In another buyer's cart |
+| `sold` | Already sold |
+| `own_item` | The caller is the item's seller |
+| `seller_not_ready` | The household cannot take PayPal payments yet |
+| `cap_reached` | The cart already has items from the maximum number of households |
+
+`release_hold` returns `released`, `not_allowed`, `cart_not_open`, `not_held` (listed in the sale but not in this cart) or `not_found`.
+
 ## Expiring holds
 
 `hold_item` holds an item for 15 minutes. Run `public.release_expired_holds()` every minute with the service role. It returns expired holds in open carts to `listed`. It abandons checkout carts that have not been touched for 3 hours and returns their items to `listed`. It also relists orphaned holds. With `pg_cron` enabled:
@@ -89,10 +108,10 @@ You can also call it from a server route or Vercel cron through the admin client
 | Who | Can |
 |---|---|
 | Anyone (anon or signed in) | Read `public_sales` and `public_listings`. These views show jittered `public_lng`/`public_lat` only, never `exact_*` |
-| Organizer | Create a sale and update their own; read its households and items; read money totals only through `organizer_sale_summary(p_sale)` |
+| Organizer | Create a sale and update their own (including `fundraiser_goal`); read its households and items; read money totals and the paid order count only through `organizer_sale_summary(p_sale)` |
 | Seller | Join a sale with `join_sale(invite_token, label)`; read, update (`label`, `exact_*`, `paused`) and delete their own household; create, read, update and delete its items. Items in `held`, `sold` or `collected` are locked. Sellers read their household's `purchase_units` without `pickup_code`, and confirm a pickup with `mark_item_collected(item, code)` |
 | Buyer | Create their own cart; hold and release items only through `hold_item` and `release_hold`; read their own carts, lines and purchase units (without `pickup_code`); get exact locations and pickup codes only through `get_my_pickups()`, and only for captures that are `COMPLETED` |
-| Service role | Everything else: PayPal order creation, captures (`mark_units_captured`), refunds, webhook events, PayPal onboarding status, moderation flags |
+| Service role | Everything else: PayPal order creation, captures (`mark_units_captured`), refunds, webhook events, PayPal onboarding status (`paypal_status` plus `paypal_payments_receivable` and `paypal_email_confirmed`), moderation flags |
 
 Client roles have column-level grants on `purchase_units`. A client `select("*")` on that table fails, so list the columns, as `PURCHASE_UNIT_CLIENT_COLUMNS` in `lib/supabase/types.ts` does.
 

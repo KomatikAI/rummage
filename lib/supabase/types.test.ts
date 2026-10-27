@@ -7,10 +7,12 @@ import {
   SELLER_SETTABLE_ITEM_STATUSES,
   TABLE_COLUMNS,
   type Database,
+  type HoldItemResult,
   type HouseholdRow,
   type OrganizerSaleSummary,
   type PickupRow,
   type PublicListingRow,
+  type ReleaseHoldResult,
 } from "./types";
 
 // Compile-time checks: `tsc --noEmit` fails if the Database type stops lining up with
@@ -27,7 +29,10 @@ function typeChecks(db: SupabaseClient<Database>) {
     PostgrestSingleResponse<OrganizerSaleSummary>
   >();
   expectTypeOf(db.rpc("hold_item", { p_item: "i", p_cart: "c" })).resolves.toEqualTypeOf<
-    PostgrestSingleResponse<boolean>
+    PostgrestSingleResponse<HoldItemResult>
+  >();
+  expectTypeOf(db.rpc("release_hold", { p_item: "i", p_cart: "c" })).resolves.toEqualTypeOf<
+    PostgrestSingleResponse<ReleaseHoldResult>
   >();
 
   // @ts-expect-error unknown table

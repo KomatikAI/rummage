@@ -51,8 +51,8 @@ export const organizerSummarySchema = z.object({
   gross_total: money,
   cash_total: money,
   fundraiser_total: money,
-  /** Not in the function yet (see SCHEMA-GAPS.md); read when it lands. */
-  paid_order_count: count.optional(),
+  fundraiser_goal: money.nullable(),
+  paid_order_count: count,
   per_household: z.array(householdSummarySchema),
 });
 
@@ -151,10 +151,9 @@ export class SupabaseSaleReadRepo implements SaleReadRepo {
       saleId,
       currency: "USD",
       raised: roundCents(summary.fundraiser_total),
-      // No goal column yet (SCHEMA-GAPS.md).
-      goal: null,
-      // Organizers cannot read carts; 0 until organizer_sale_summary returns the count.
-      paidOrderCount: summary.paid_order_count ?? 0,
+      goal: summary.fundraiser_goal === null ? null : roundCents(summary.fundraiser_goal),
+      // Organizers cannot read carts; the summary counts paid and partially paid ones.
+      paidOrderCount: summary.paid_order_count,
     };
   }
 

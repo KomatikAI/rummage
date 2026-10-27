@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { TABLE_COLUMNS, type TableName } from "./types";
+import { HOLD_ITEM_RESULTS, RELEASE_HOLD_RESULTS, TABLE_COLUMNS, type TableName } from "./types";
 
 /*
  * Static checks on the SQL so the hand-written types and the migrations cannot drift,
@@ -14,31 +14,53 @@ import { TABLE_COLUMNS, type TableName } from "./types";
 
 const root = fileURLToPath(new URL("../../supabase", import.meta.url));
 const migrationsDir = join(root, "migrations");
-const migrationSql = readdirSync(migrationsDir)
+const migrationFiles = readdirSync(migrationsDir)
   .filter((file) => file.endsWith(".sql"))
   .sort()
-  .map((file) => readFileSync(join(migrationsDir, file), "utf8"))
-  .join("\n");
+  .map((file) => ({ file, sql: readFileSync(join(migrationsDir, file), "utf8") }));
+const migrationSql = migrationFiles.map((m) => m.sql).join("\n");
 const seedSql = readFileSync(join(root, "seed.sql"), "utf8");
 
-const COLUMN_LINE =
-  /^([a-z_]+)\s+(uuid|text|date|time|timestamptz|double precision|integer|numeric|boolean|jsonb)\b/;
+const COLUMN_TYPES = "uuid|text|date|time|timestamptz|double precision|integer|numeric|boolean|jsonb";
+const COLUMN_LINE = new RegExp(`^([a-z_]+)\\s+(${COLUMN_TYPES})\\b`);
+const ADD_COLUMN = new RegExp(`add column (?:if not exists )?([a-z_]+)\\s+(?:${COLUMN_TYPES})\\b`, "g");
 
-function createTableColumns(sql: string): Map<string, string[]> {
+/**
+ * Columns per table: the `create table` list, then every later
+ * `alter table ... add column` in migration order, so added columns come last.
+ */
+function tableColumns(files: { sql: string }[]): Map<string, string[]> {
   const tables = new Map<string, string[]>();
-  for (const match of sql.matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
-    const columns = match[2]
-      .split("\n")
-      .map((line) => line.trim())
-      .map((line) => COLUMN_LINE.exec(line)?.[1])
-      .filter((name): name is string => name !== undefined);
-    tables.set(match[1], columns);
+  for (const { sql } of files) {
+    for (const match of sql.matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+      const columns = match[2]
+        .split("\n")
+        .map((line) => line.trim())
+        .map((line) => COLUMN_LINE.exec(line)?.[1])
+        .filter((name): name is string => name !== undefined);
+      tables.set(match[1], columns);
+    }
+    for (const match of sql.matchAll(/alter table public\.(\w+)\s([\s\S]*?);/g)) {
+      const columns = tables.get(match[1]);
+      if (!columns) continue;
+      for (const added of match[2].matchAll(ADD_COLUMN)) {
+        if (!columns.includes(added[1])) columns.push(added[1]);
+      }
+    }
   }
   return tables;
 }
 
+/** The latest definition of a function across all migrations: header and body. */
+function latestFunction(name: string): string {
+  const start = migrationSql.lastIndexOf(`create or replace function ${name}(`);
+  if (start < 0) return "";
+  const bodyStart = migrationSql.indexOf("as $$", start);
+  return migrationSql.slice(start, migrationSql.indexOf("$$;", bodyStart + 5));
+}
+
 describe("migration vs types.ts", () => {
-  const tables = createTableColumns(migrationSql);
+  const tables = tableColumns(migrationFiles);
 
   it("creates exactly the tables types.ts knows", () => {
     expect([...tables.keys()].sort()).toEqual(Object.keys(TABLE_COLUMNS).sort());
@@ -57,18 +79,35 @@ describe("migration vs types.ts", () => {
     }
   });
 
-  it("revokes default access on every SECURITY DEFINER function", () => {
-    const chunks = migrationSql.split(/create or replace function /).slice(1);
-    const definers = chunks
-      .filter((chunk) => /\bsecurity definer\b/.test(chunk.slice(0, chunk.indexOf("as $$"))))
-      .map((chunk) => chunk.slice(0, chunk.indexOf("(")));
-    expect(definers.length).toBeGreaterThanOrEqual(12);
-    for (const name of definers) {
-      const revoke = new RegExp(
-        `revoke all on function ${name.replace(".", "\\.")}\\([^)]*\\) from public, anon, authenticated;`,
-      );
-      expect(migrationSql, name).toMatch(revoke);
+  it("revokes default access on every SECURITY DEFINER function, in the file that (re)creates it", () => {
+    // A dropped and recreated function gets PUBLIC execute back, so an earlier file's
+    // revoke does not count.
+    let total = 0;
+    for (const { file, sql } of migrationFiles) {
+      const chunks = sql.split(/create or replace function /).slice(1);
+      const definers = chunks
+        .filter((chunk) => /\bsecurity definer\b/.test(chunk.slice(0, chunk.indexOf("as $$"))))
+        .map((chunk) => chunk.slice(0, chunk.indexOf("(")));
+      total += definers.length;
+      for (const name of definers) {
+        const revoke = new RegExp(
+          `revoke all on function ${name.replace(".", "\\.")}\\([^)]*\\) from public, anon, authenticated;`,
+        );
+        expect(sql, `${file}: ${name}`).toMatch(revoke);
+      }
     }
+    expect(total).toBeGreaterThanOrEqual(12);
+  });
+
+  it("returns exactly the hold_item and release_hold results types.ts lists", () => {
+    const literals = (fn: string) =>
+      [...new Set([...fn.matchAll(/return '([a-z_]+)';/g)].map((m) => m[1]))].sort();
+    const holdItem = latestFunction("public.hold_item");
+    const releaseHold = latestFunction("public.release_hold");
+    expect(holdItem).toMatch(/\breturns text\b/);
+    expect(releaseHold).toMatch(/\breturns text\b/);
+    expect(literals(holdItem)).toEqual([...HOLD_ITEM_RESULTS].sort());
+    expect(literals(releaseHold)).toEqual([...RELEASE_HOLD_RESULTS].sort());
   });
 
   it("grants the service-only functions to service_role alone", () => {

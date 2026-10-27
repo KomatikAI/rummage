@@ -304,6 +304,8 @@ export function summaryJson(overrides: FakeRow = {}): FakeRow {
     gross_total: 42.5,
     cash_total: 4,
     fundraiser_total: 10,
+    fundraiser_goal: null,
+    paid_order_count: 0,
     per_household: [
       {
         household_id: "b0000000-0000-4000-8000-000000000001",

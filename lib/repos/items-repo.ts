@@ -10,7 +10,14 @@ import {
   type ShopItem,
 } from "@/lib/ai/shopping-tools";
 import type { RummageClient } from "@/lib/supabase/server";
-import type { ItemStatus as DbItemStatus, PublicListingRow } from "@/lib/supabase/types";
+import {
+  HOLD_ITEM_RESULTS,
+  RELEASE_HOLD_RESULTS,
+  type ItemStatus as DbItemStatus,
+  type HoldItemResult,
+  type PublicListingRow,
+  type ReleaseHoldResult,
+} from "@/lib/supabase/types";
 
 import { isUuid } from "./auth";
 import { queryFailed, RepoError, type DbError } from "./errors";
@@ -19,9 +26,8 @@ import { queryFailed, RepoError, type DbError } from "./errors";
  * `ItemsRepo` over Supabase, scoped to one sale and running as the signed-in buyer.
  *
  * - search reads the `public_listings` view (listed, held and sold items; jittered pins).
- * - hold / release go through the `hold_item` / `release_hold` RPCs. Both return a bare
- *   boolean and never raise for a refusal, so on `false` the repo reads the listing to
- *   say why (not found, already held, sold, or not allowed for this cart).
+ * - hold / release go through the `hold_item` / `release_hold` RPCs. Both return a text
+ *   reason and never raise for a refusal; the repo maps it straight to the result type.
  * - the cart is read from `carts` + `cart_lines` (buyer RLS) and the item details from
  *   `public_listings`, because buyers have no row access to `items` or `households`.
  *
@@ -127,6 +133,46 @@ function score(row: ListingSearchRow, tokens: string[]): number {
   return total;
 }
 
+/** hold_item's reasons, folded into the buyer-facing refusal set. */
+export function toHoldRefusal(
+  result: Exclude<HoldItemResult, "held">,
+): Extract<HoldResult, { ok: false }>["reason"] {
+  switch (result) {
+    case "not_found":
+    case "already_held":
+    case "sold":
+      return result;
+    case "not_allowed":
+    case "cart_not_open":
+    case "own_item":
+    case "seller_not_ready":
+    case "cap_reached":
+      return "not_allowed";
+  }
+}
+
+/** release_hold's reasons, folded into the buyer-facing refusal set. */
+export function toReleaseRefusal(
+  result: Exclude<ReleaseHoldResult, "released">,
+): Extract<ReleaseResult, { ok: false }>["reason"] {
+  switch (result) {
+    case "not_found":
+      return "not_found";
+    case "not_held":
+    case "not_allowed":
+    case "cart_not_open":
+      return "not_held_by_cart";
+  }
+}
+
+function isHoldItemResult(value: unknown): value is HoldItemResult {
+  return (HOLD_ITEM_RESULTS as readonly unknown[]).includes(value);
+}
+
+function isReleaseHoldResult(value: unknown): value is ReleaseHoldResult {
+  return (RELEASE_HOLD_RESULTS as readonly unknown[]).includes(value);
+}
+
 /** RPC errors that mean "this id can never be held/released", as opposed to an outage. */
 function rpcRefusal(error: DbError): "not_found" | "not_allowed" | null {
   if (error.code === "22P02") return "not_found"; // invalid uuid text
@@ -213,10 +259,13 @@ export class SupabaseItemsRepo implements ItemsRepo {
       if (reason) return { ok: false, itemId, reason };
       throw queryFailed("holdItem", error);
     }
-    if (data === true) {
+    if (!isHoldItemResult(data)) {
+      throw new RepoError("query_failed", "holdItem", `unexpected hold_item result ${JSON.stringify(data)}`);
+    }
+    if (data === "held") {
       return { ok: true, itemId, cartId, expiresAt: await this.holdExpiry(itemId, cartId) };
     }
-    return { ok: false, itemId, reason: await this.holdRefusalReason(itemId, cartId) };
+    return { ok: false, itemId, reason: toHoldRefusal(data) };
   }
 
   async releaseHold(itemId: string, cartId: string): Promise<ReleaseResult> {
@@ -230,9 +279,15 @@ export class SupabaseItemsRepo implements ItemsRepo {
       if (reason === "not_allowed") return { ok: false, itemId, reason: "not_held_by_cart" };
       throw queryFailed("releaseHold", error);
     }
-    if (data === true) return { ok: true, itemId, cartId };
-    const listing = await this.listingInSale(itemId);
-    return { ok: false, itemId, reason: listing ? "not_held_by_cart" : "not_found" };
+    if (!isReleaseHoldResult(data)) {
+      throw new RepoError(
+        "query_failed",
+        "releaseHold",
+        `unexpected release_hold result ${JSON.stringify(data)}`,
+      );
+    }
+    if (data === "released") return { ok: true, itemId, cartId };
+    return { ok: false, itemId, reason: toReleaseRefusal(data) };
   }
 
   async getCart(cartId: string): Promise<Cart> {
@@ -296,43 +351,6 @@ export class SupabaseItemsRepo implements ItemsRepo {
       lines: cartLines,
       subtotal: roundCents(cartLines.reduce((sum, line) => sum + line.price, 0)),
     };
-  }
-
-  /** The listing for an item in this sale, or null when it is not publicly listed here. */
-  private async listingInSale(itemId: string) {
-    const { data, error } = await this.db
-      .from("public_listings")
-      .select("item_id, sale_id, status")
-      .eq("item_id", itemId)
-      .maybeSingle();
-    if (error) throw queryFailed("listingInSale", error);
-    if (!data || data.sale_id !== this.saleId) return null;
-    return data;
-  }
-
-  private async holdRefusalReason(
-    itemId: string,
-    cartId: string,
-  ): Promise<"not_found" | "already_held" | "sold" | "not_allowed"> {
-    const listing = await this.listingInSale(itemId);
-    if (!listing) return "not_found";
-    if (listing.status === "sold") return "sold";
-    if (listing.status === "held") {
-      // Held by this very cart yet refused: the cart is no longer open (e.g. at checkout).
-      const { data, error } = await this.db
-        .from("cart_lines")
-        .select("item_id")
-        .eq("cart_id", cartId)
-        .eq("item_id", itemId)
-        .eq("active", true)
-        .maybeSingle();
-      if (error) throw queryFailed("holdRefusalReason", error);
-      return data ? "not_allowed" : "already_held";
-    }
-    // Listed but refused: the cart is not this buyer's open cart, the household cap is
-    // reached, the household cannot take PayPal yet, the buyer is its seller, or the
-    // sale is not open.
-    return "not_allowed";
   }
 
   private async holdExpiry(itemId: string, cartId: string): Promise<string> {

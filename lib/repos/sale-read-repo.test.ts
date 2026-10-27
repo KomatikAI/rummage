@@ -127,7 +127,7 @@ describe("SupabaseSaleReadRepo.householdStatuses", () => {
 });
 
 describe("SupabaseSaleReadRepo.fundraiserTotal", () => {
-  it("reports the donation total with no goal and 0 paid orders until the schema has them", async () => {
+  it("reports the donation total with no goal when the organizer set none", async () => {
     const { repo } = setup();
     await expect(repo.fundraiserTotal(SALE_ID)).resolves.toEqual({
       saleId: SALE_ID,
@@ -138,8 +138,18 @@ describe("SupabaseSaleReadRepo.fundraiserTotal", () => {
     });
   });
 
-  it("uses paid_order_count once organizer_sale_summary returns it", async () => {
-    const { repo } = setup(summaryJson({ paid_order_count: 7 }));
-    await expect(repo.fundraiserTotal(SALE_ID)).resolves.toMatchObject({ paidOrderCount: 7 });
+  it("reads the goal and the paid order count from organizer_sale_summary", async () => {
+    const { repo } = setup(summaryJson({ paid_order_count: 7, fundraiser_goal: "500.00" }));
+    await expect(repo.fundraiserTotal(SALE_ID)).resolves.toMatchObject({
+      goal: 500,
+      paidOrderCount: 7,
+    });
+  });
+
+  it("rejects a summary without paid_order_count (migration 20261028090000 not applied)", async () => {
+    const summary = summaryJson();
+    delete summary.paid_order_count;
+    const { repo } = setup(summary);
+    await expect(repo.fundraiserTotal(SALE_ID)).rejects.toMatchObject({ code: "invalid_summary" });
   });
 });

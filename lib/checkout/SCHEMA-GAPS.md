@@ -1,9 +1,9 @@
 # Checkout schema gaps (lane E)
 
-The PayPal routes run on the existing migration unchanged. Where it has no
-column for something, the routes use the closest existing one, as listed below.
-The SQL shown is the smallest change that would close each gap. It has not been
-applied: the migration was left untouched.
+Where the schema has no column for something, the PayPal routes use the closest
+existing one, as listed below. Seller readiness flags were added in
+`supabase/migrations/20261028090000_schema_gaps.sql`; the rest need no SQL
+unless the product changes.
 
 ## 1. Order id and unit status
 
@@ -18,22 +18,13 @@ applied: the migration was left untouched.
 
 No SQL is needed unless one cart must be able to hold several orders.
 
-## 2. Seller readiness detail
+## 2. Seller readiness: OAuth scopes not recorded
 
-`households` keeps readiness as `paypal_status` (unlinked, pending, ready,
-revoked) plus `paypal_checked_at`. A household is set to `ready` only when
-PayPal reports both `payments_receivable` and `primary_email_confirmed`.
-Otherwise it is set to `pending`. The two flags are not kept separately, and
-the OAuth scope checks that `readyToSell` also makes are not recorded.
-
-Proposed SQL:
-
-    alter table public.households
-      add column paypal_payments_receivable boolean,
-      add column paypal_email_confirmed boolean;
-
-The same change would need to go into `lib/supabase/types.ts` and the
-schema-sync test.
+`households.paypal_payments_receivable` and `paypal_email_confirmed` (migration
+`20261028090000_schema_gaps.sql`) now keep the two flags behind `paypal_status`.
+The payment and refund OAuth scope checks that `readyToSell` also makes are
+still not stored, and `paypal_status` does not depend on them. Two more
+nullable boolean columns would close this if the status should require them.
 
 ## 3. Referral tracking id
 

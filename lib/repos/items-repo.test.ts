@@ -7,6 +7,8 @@ import {
   distanceMetres,
   searchTokens,
   SupabaseItemsRepo,
+  toHoldRefusal,
+  toReleaseRefusal,
   toShopStatus,
 } from "./items-repo";
 import {
@@ -49,6 +51,17 @@ describe("toShopStatus", () => {
     expect(toShopStatus("cash_sold")).toBe("sold");
     expect(toShopStatus("draft")).toBeNull();
     expect(toShopStatus("hidden")).toBeNull();
+  });
+});
+
+describe("toHoldRefusal / toReleaseRefusal", () => {
+  it("keeps the reasons buyers act on and folds the cart and seller causes into not_allowed", () => {
+    expect(toHoldRefusal("sold")).toBe("sold");
+    expect(toHoldRefusal("already_held")).toBe("already_held");
+    expect(toHoldRefusal("not_found")).toBe("not_found");
+    expect(toHoldRefusal("cap_reached")).toBe("not_allowed");
+    expect(toReleaseRefusal("not_found")).toBe("not_found");
+    expect(toReleaseRefusal("cart_not_open")).toBe("not_held_by_cart");
   });
 });
 
@@ -164,7 +177,7 @@ describe("SupabaseItemsRepo.holdItem", () => {
         { cart_id: CART_ID, item_id: ITEM, active: true, hold_expires_at: "2026-10-27T12:15:00Z" },
       ],
     });
-    fake.rpcHandlers.hold_item = () => ({ data: true, error: null });
+    fake.rpcHandlers.hold_item = () => ({ data: "held", error: null });
 
     await expect(repo.holdItem(ITEM, CART_ID)).resolves.toEqual({
       ok: true,
@@ -181,7 +194,7 @@ describe("SupabaseItemsRepo.holdItem", () => {
 
   it("falls back to now + HOLD_MINUTES when the expiry read-back fails", async () => {
     const { fake, repo } = setup([listing(1)]);
-    fake.rpcHandlers.hold_item = () => ({ data: true, error: null });
+    fake.rpcHandlers.hold_item = () => ({ data: "held", error: null });
     const result = await repo.holdItem(ITEM, CART_ID);
     expect(result).toMatchObject({
       ok: true,
@@ -190,33 +203,25 @@ describe("SupabaseItemsRepo.holdItem", () => {
   });
 
   it.each([
+    ["not_found", "not_found"],
+    ["already_held", "already_held"],
     ["sold", "sold"],
-    ["held", "already_held"],
-    ["listed", "not_allowed"],
-  ] as const)("maps a refused hold on a %s listing to %s", async (status, reason) => {
-    const { fake, repo } = setup([listing(1, { status })], { cart_lines: [] });
-    fake.rpcHandlers.hold_item = () => ({ data: false, error: null });
+    ["not_allowed", "not_allowed"],
+    ["cart_not_open", "not_allowed"],
+    ["own_item", "not_allowed"],
+    ["seller_not_ready", "not_allowed"],
+    ["cap_reached", "not_allowed"],
+  ] as const)("maps hold_item %s to %s without re-reading anything", async (result, reason) => {
+    const { fake, repo } = setup([listing(1)]);
+    fake.rpcHandlers.hold_item = () => ({ data: result, error: null });
     await expect(repo.holdItem(ITEM, CART_ID)).resolves.toEqual({ ok: false, itemId: ITEM, reason });
+    expect(fake.calls.map((c) => c.table)).toEqual(["hold_item"]);
   });
 
-  it("maps a refused hold on an item this cart already holds to not_allowed (cart not open)", async () => {
-    const { fake, repo } = setup([listing(1, { status: "held" })], {
-      cart_lines: [{ cart_id: CART_ID, item_id: ITEM, active: true, hold_expires_at: "x" }],
-    });
+  it("throws query_failed on a result hold_item never returns (e.g. the old boolean)", async () => {
+    const { fake, repo } = setup([listing(1)]);
     fake.rpcHandlers.hold_item = () => ({ data: false, error: null });
-    await expect(repo.holdItem(ITEM, CART_ID)).resolves.toMatchObject({ reason: "not_allowed" });
-  });
-
-  it("maps an item that is not listed in this sale to not_found", async () => {
-    const { fake, repo } = setup([listing(1, { sale_id: OTHER_SALE_ID })]);
-    fake.rpcHandlers.hold_item = () => ({ data: false, error: null });
-    await expect(repo.holdItem(ITEM, CART_ID)).resolves.toMatchObject({ reason: "not_found" });
-
-    const empty = setup([]);
-    empty.fake.rpcHandlers.hold_item = () => ({ data: false, error: null });
-    await expect(empty.repo.holdItem(ITEM, CART_ID)).resolves.toMatchObject({
-      reason: "not_found",
-    });
+    await expect(repo.holdItem(ITEM, CART_ID)).rejects.toMatchObject({ code: "query_failed" });
   });
 
   it("refuses a non-uuid item id without calling the RPC", async () => {
@@ -231,7 +236,7 @@ describe("SupabaseItemsRepo.holdItem", () => {
 
   it("maps RPC error codes: 22P02 -> not_found, 42501 -> not_allowed, others throw", async () => {
     const { fake, repo } = setup();
-    fake.rpcHandlers.hold_item = () => ({ data: true, error: null });
+    fake.rpcHandlers.hold_item = () => ({ data: "held", error: null });
     fake.failNext("hold_item", "rpc", { code: "22P02", message: "invalid input syntax for type uuid" });
     await expect(repo.holdItem(ITEM, CART_ID)).resolves.toMatchObject({ reason: "not_found" });
     fake.failNext("hold_item", "rpc", { code: "42501", message: "permission denied for function hold_item" });
@@ -246,7 +251,7 @@ describe("SupabaseItemsRepo.releaseHold", () => {
 
   it("returns ok when the RPC released the hold", async () => {
     const { fake, repo } = setup([listing(1, { status: "held" })]);
-    fake.rpcHandlers.release_hold = () => ({ data: true, error: null });
+    fake.rpcHandlers.release_hold = () => ({ data: "released", error: null });
     await expect(repo.releaseHold(ITEM, CART_ID)).resolves.toEqual({
       ok: true,
       itemId: ITEM,
@@ -255,21 +260,28 @@ describe("SupabaseItemsRepo.releaseHold", () => {
     expect(fake.calls[0]).toMatchObject({ table: "release_hold", args: { p_item: ITEM, p_cart: CART_ID } });
   });
 
-  it("maps a refused release on a listed item to not_held_by_cart", async () => {
+  it.each([
+    ["not_found", "not_found"],
+    ["not_held", "not_held_by_cart"],
+    ["not_allowed", "not_held_by_cart"],
+    ["cart_not_open", "not_held_by_cart"],
+  ] as const)("maps release_hold %s to %s without re-reading anything", async (result, reason) => {
     const { fake, repo } = setup([listing(1, { status: "held" })]);
-    fake.rpcHandlers.release_hold = () => ({ data: false, error: null });
-    await expect(repo.releaseHold(ITEM, CART_ID)).resolves.toEqual({
-      ok: false,
-      itemId: ITEM,
-      reason: "not_held_by_cart",
-    });
+    fake.rpcHandlers.release_hold = () => ({ data: result, error: null });
+    await expect(repo.releaseHold(ITEM, CART_ID)).resolves.toEqual({ ok: false, itemId: ITEM, reason });
+    expect(fake.calls.map((c) => c.table)).toEqual(["release_hold"]);
   });
 
-  it("maps a refused release on an unknown item to not_found", async () => {
+  it("refuses a non-uuid item id without calling the RPC", async () => {
     const { fake, repo } = setup([]);
-    fake.rpcHandlers.release_hold = () => ({ data: false, error: null });
-    await expect(repo.releaseHold(ITEM, CART_ID)).resolves.toMatchObject({ reason: "not_found" });
     await expect(repo.releaseHold("nope", CART_ID)).resolves.toMatchObject({ reason: "not_found" });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("throws query_failed on a result release_hold never returns", async () => {
+    const { fake, repo } = setup([]);
+    fake.rpcHandlers.release_hold = () => ({ data: true, error: null });
+    await expect(repo.releaseHold(ITEM, CART_ID)).rejects.toMatchObject({ code: "query_failed" });
   });
 
   it("maps RPC error codes and throws on outages", async () => {

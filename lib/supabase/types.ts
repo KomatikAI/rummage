@@ -1,10 +1,11 @@
 /**
  * Hand-written Supabase types for the Rummage schema.
  *
- * Source of truth: supabase/migrations/20261027120000_init.sql. Keep the two in sync:
+ * Source of truth: supabase/migrations/ (applied in filename order). Keep the two in sync:
  * `schema-sync.test.ts` checks that TABLE_COLUMNS below matches every `create table`
- * column list in the migration, and TABLE_COLUMNS is checked at compile time against
- * the Row types, so a column added in one place and not the other fails the tests.
+ * column list plus later `alter table ... add column` statements, and TABLE_COLUMNS is
+ * checked at compile time against the Row types, so a column added in one place and not
+ * the other fails the tests.
  *
  * Postgres -> TypeScript: uuid/text/date/time/timestamptz -> string,
  * numeric/integer/double precision -> number, jsonb -> Json.
@@ -63,6 +64,30 @@ export const SELLER_SETTABLE_ITEM_STATUSES = ["draft", "listed", "hidden", "cash
 export const CART_STATUSES = ["open", "checkout", "paid", "partial", "failed", "abandoned"] as const;
 export type CartStatus = (typeof CART_STATUSES)[number];
 
+/** What hold_item() returns. Only "held" means the item is in the cart. */
+export const HOLD_ITEM_RESULTS = [
+  "held",
+  "not_allowed",
+  "cart_not_open",
+  "not_found",
+  "already_held",
+  "sold",
+  "own_item",
+  "seller_not_ready",
+  "cap_reached",
+] as const;
+export type HoldItemResult = (typeof HOLD_ITEM_RESULTS)[number];
+
+/** What release_hold() returns. Only "released" means the line was removed. */
+export const RELEASE_HOLD_RESULTS = [
+  "released",
+  "not_allowed",
+  "cart_not_open",
+  "not_held",
+  "not_found",
+] as const;
+export type ReleaseHoldResult = (typeof RELEASE_HOLD_RESULTS)[number];
+
 /** PayPal Orders v2 allows at most this many purchase units per order. */
 export const PAYPAL_MAX_PURCHASE_UNITS = 10;
 
@@ -95,6 +120,8 @@ export type SaleRow = {
   invite_token: string;
   status: SaleStatus;
   created_at: string;
+  /** Optional donation goal in the order currency (organizer-set). */
+  fundraiser_goal: number | null;
 };
 
 export type HouseholdRow = {
@@ -112,6 +139,10 @@ export type HouseholdRow = {
   paypal_checked_at: string | null;
   paused: boolean;
   created_at: string;
+  /** PayPal's payments_receivable at the last check; null = never checked. Service role writes. */
+  paypal_payments_receivable: boolean | null;
+  /** PayPal's primary_email_confirmed at the last check; null = never checked. Service role writes. */
+  paypal_email_confirmed: boolean | null;
 };
 
 export type ItemRow = {
@@ -222,6 +253,7 @@ export type PublicSaleRow = {
   fundraiser_name: string | null;
   accepts_donations: boolean;
   status: SaleStatus;
+  fundraiser_goal: number | null;
 };
 
 /** One row of public_listings. Only jittered public_* coordinates, never exact_*. */
@@ -295,6 +327,10 @@ export type OrganizerSaleSummary = {
   cash_total: number;
   /** Completed, unrefunded donation units. */
   fundraiser_total: number;
+  /** sales.fundraiser_goal; null when the organizer set none. */
+  fundraiser_goal: number | null;
+  /** Carts in the sale that are paid or partially paid. */
+  paid_order_count: number;
   per_household: OrganizerHouseholdSummary[];
 };
 
@@ -392,11 +428,11 @@ export type Database = {
       };
       hold_item: {
         Args: { p_item: string; p_cart: string };
-        Returns: boolean;
+        Returns: HoldItemResult;
       };
       release_hold: {
         Args: { p_item: string; p_cart: string };
-        Returns: boolean;
+        Returns: ReleaseHoldResult;
       };
       release_expired_holds: {
         Args: never;
@@ -465,6 +501,7 @@ export const TABLE_COLUMNS = {
     "invite_token",
     "status",
     "created_at",
+    "fundraiser_goal",
   ]),
   households: columns<HouseholdRow>()([
     "id",
@@ -481,6 +518,8 @@ export const TABLE_COLUMNS = {
     "paypal_checked_at",
     "paused",
     "created_at",
+    "paypal_payments_receivable",
+    "paypal_email_confirmed",
   ]),
   items: columns<ItemRow>()([
     "id",
