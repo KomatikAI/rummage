@@ -29,6 +29,7 @@ type Fixture = {
   sale?: Record<string, unknown>;
   lines?: unknown[];
   households?: unknown[];
+  units?: unknown[];
 };
 
 function resolverFor(fixture: Fixture = {}): QueryResolver {
@@ -58,6 +59,7 @@ function resolverFor(fixture: Fixture = {}): QueryResolver {
         ],
       );
     }
+    if (q.table === "purchase_units" && q.action === "select") return ok(fixture.units ?? []);
     if (q.table === "items") {
       return ok([
         { id: "i1", title: "Cast iron pan" },
@@ -119,8 +121,29 @@ describe("POST /api/paypal/create-order validation and auth", () => {
     expect((await POST(jsonRequest(URL_, { cartId: CART }))).status).toBe(403);
   });
 
+  it("409s a cart waiting at checkout with canCancel, and never cancels it", async () => {
+    const db = setup({ cart: { id: CART, buyer_user_id: BUYER, sale_id: SALE, status: "checkout" } });
+    const response = await POST(jsonRequest(URL_, { cartId: CART }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "cart_in_checkout", cartId: CART, canCancel: true });
+    expect(db.queries.filter((q) => q.action !== "select")).toHaveLength(0);
+    expect(createMultiSellerOrder).not.toHaveBeenCalled();
+  });
+
+  it("409s cart_not_open for a checkout whose capture has started", async () => {
+    setup({
+      cart: { id: CART, buyer_user_id: BUYER, sale_id: SALE, status: "checkout" },
+      units: [{ capture_id: "CAP-1", capture_status: "PENDING" }],
+    });
+    const response = await POST(jsonRequest(URL_, { cartId: CART }));
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toMatchObject({ error: "cart_not_open" });
+    expect(body).not.toHaveProperty("canCancel");
+  });
+
   it("409s a cart that is not open, or that another request claimed first", async () => {
-    setup({ cart: { id: CART, buyer_user_id: BUYER, sale_id: SALE, status: "checkout" } });
+    setup({ cart: { id: CART, buyer_user_id: BUYER, sale_id: SALE, status: "paid" } });
     const response = await POST(jsonRequest(URL_, { cartId: CART }));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "cart_not_open" });

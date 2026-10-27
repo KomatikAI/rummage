@@ -15,11 +15,14 @@ import { ButtonLink, cn, Spinner } from "@/components/ui";
 import {
   CHECKOUT_CANCELLED_MESSAGE,
   CHECKOUT_ERROR_MESSAGE,
+  cancelErrorMessage,
+  cancelOutcome,
   captureErrorMessage,
   createOrderErrorMessage,
   errorCode,
   parseCaptureResponse,
   parseCreateOrderResponse,
+  type CancelOutcome,
 } from "./checkout-messages";
 
 /** Loads the checkout script once for the page. No merchant ids here: the server builds the order. */
@@ -58,15 +61,30 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; body
 }
 
 /**
+ * Puts a cart that is waiting at checkout back to open (POST /api/paypal/cancel), so
+ * its lines can be edited. Never throws: a network failure is "failed".
+ */
+export async function cancelCheckout(cartId: string): Promise<{ outcome: CancelOutcome; code: string | null }> {
+  try {
+    const result = await postJson("/api/paypal/cancel", { cartId });
+    return { outcome: cancelOutcome(result), code: errorCode(result.body) };
+  } catch {
+    return { outcome: "failed", code: null };
+  }
+}
+
+/**
  * The checkout buttons for one cart. createOrder posts to /api/paypal/create-order (or
- * reuses the order a cancelled attempt left behind), onApprove posts to
- * /api/paypal/capture and then opens the order page.
+ * reuses the order an unfinished attempt left behind), onApprove posts to
+ * /api/paypal/capture and then opens the order page. onCancel and onError post to
+ * /api/paypal/cancel so the cart is editable again.
  */
 export function CheckoutButtons({ cartId, initialOrderId, donationCents, disabled }: CheckoutButtonsProps) {
   const router = useRouter();
   const [{ isPending, isRejected }] = usePayPalScriptReducer();
   const orderIdRef = useRef<string | null>(initialOrderId);
   const donationRef = useRef<number | null>(donationCents);
+  const cancellingRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -74,9 +92,30 @@ export function CheckoutButtons({ cartId, initialOrderId, donationCents, disable
     donationRef.current = donationCents;
   }, [donationCents]);
 
+  // After a cancel and refresh the saved order is gone, so the next click starts a new one.
   useEffect(() => {
-    if (initialOrderId) orderIdRef.current = initialOrderId;
+    orderIdRef.current = initialOrderId;
   }, [initialOrderId]);
+
+  /** Reopens the cart once per close; a payment that already started goes to the order page. */
+  const releaseCheckout = async (keepNotice: boolean) => {
+    if (cancellingRef.current) return;
+    cancellingRef.current = true;
+    setBusy(true);
+    try {
+      const { outcome, code } = await cancelCheckout(cartId);
+      if (outcome === "capture_started") {
+        router.push(`/buyer/orders/${cartId}`);
+        return;
+      }
+      if (outcome === "reopened") orderIdRef.current = null;
+      else if (!keepNotice) setNotice({ tone: "error", text: cancelErrorMessage(code) });
+      router.refresh();
+    } finally {
+      cancellingRef.current = false;
+      setBusy(false);
+    }
+  };
 
   const createOrder: PayPalButtonsComponentProps["createOrder"] = async () => {
     setNotice(null);
@@ -95,7 +134,7 @@ export function CheckoutButtons({ cartId, initialOrderId, donationCents, disable
         const code = errorCode(result.body);
         const text = createOrderErrorMessage(code);
         setNotice({ tone: "error", text });
-        if (code === "cart_not_open") router.refresh();
+        if (code === "cart_not_open" || code === "cart_in_checkout") router.refresh();
         throw new Error(text);
       }
       orderIdRef.current = order.orderId;
@@ -126,12 +165,12 @@ export function CheckoutButtons({ cartId, initialOrderId, donationCents, disable
   const onError: PayPalButtonsComponentProps["onError"] = () => {
     setBusy(false);
     setNotice((current) => (current?.tone === "error" ? current : { tone: "error", text: CHECKOUT_ERROR_MESSAGE }));
+    void releaseCheckout(true);
   };
 
   const onCancel: PayPalButtonsComponentProps["onCancel"] = () => {
-    setBusy(false);
     setNotice({ tone: "info", text: CHECKOUT_CANCELLED_MESSAGE });
-    router.refresh();
+    void releaseCheckout(false);
   };
 
   return (

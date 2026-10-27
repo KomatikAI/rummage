@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
 import { releaseHoldAction } from "@/app/buyer/cart/actions";
 import { Button, ButtonLink, Card, CardTitle, cn, EmptyState, Field, formatMoney, Input, Money } from "@/components/ui";
@@ -20,7 +20,14 @@ import {
   type CartItemLine,
   type DonationChoice,
 } from "./cart";
-import { CheckoutButtons, CheckoutProvider } from "./checkout-buttons";
+import { cancelCheckout, CheckoutButtons, CheckoutProvider } from "./checkout-buttons";
+import {
+  CHECKOUT_START_OVER_LABEL,
+  CHECKOUT_TRY_AGAIN_LABEL,
+  CHECKOUT_UNFINISHED_TEXT,
+  CHECKOUT_UNFINISHED_TITLE,
+  cancelErrorMessage,
+} from "./checkout-messages";
 import { useNow } from "./clock";
 import type { ActionResult } from "./hold-messages";
 import { ItemPhoto } from "./item-photo";
@@ -88,6 +95,8 @@ function SaleCart({
   const now = useNow();
   const [message, setMessage] = useState<ActionResult | null>(null);
   const [releasing, setReleasing] = useState<string | null>(null);
+  const [startingOver, setStartingOver] = useState(false);
+  const checkoutRef = useRef<HTMLDivElement>(null);
   const [, startTransition] = useTransition();
   const [choice, setChoice] = useState<DonationChoice>(0);
   const [custom, setCustom] = useState("");
@@ -115,6 +124,26 @@ function SaleCart({
     });
   }
 
+  /** "Try again": the checkout below already reuses the saved order, so bring it into view. */
+  function tryAgain() {
+    checkoutRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    checkoutRef.current?.focus({ preventScroll: true });
+  }
+
+  /** "Start over": drop the saved order so the cart can be edited again. */
+  async function startOver() {
+    setMessage(null);
+    setStartingOver(true);
+    const { outcome, code } = await cancelCheckout(cart.cartId);
+    if (outcome === "capture_started") {
+      router.push(`/buyer/orders/${cart.cartId}`);
+      return;
+    }
+    if (outcome === "failed") setMessage({ ok: false, message: cancelErrorMessage(code) });
+    setStartingOver(false);
+    router.refresh();
+  }
+
   if (lines.length === 0) {
     return (
       <EmptyState
@@ -130,9 +159,20 @@ function SaleCart({
       {showSaleName ? <h2 className="font-display text-xl font-semibold text-ink">{cart.sale.name}</h2> : null}
 
       {inCheckout ? (
-        <p className="rounded-sticker bg-paper-deep p-3 text-sm text-ink">
-          You started paying for this cart. Pay below to finish, and your items stay held while you do.
-        </p>
+        <div role="status" className="flex flex-col gap-3 rounded-sticker bg-paper-deep p-3 text-sm text-ink">
+          <div className="flex flex-col gap-1">
+            <p className="font-semibold">{CHECKOUT_UNFINISHED_TITLE}</p>
+            <p className="text-ink-soft">{CHECKOUT_UNFINISHED_TEXT}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={tryAgain} disabled={startingOver || !checkoutReady}>
+              {CHECKOUT_TRY_AGAIN_LABEL}
+            </Button>
+            <Button variant="secondary" size="sm" loading={startingOver} onClick={() => void startOver()}>
+              {CHECKOUT_START_OVER_LABEL}
+            </Button>
+          </div>
+        </div>
       ) : left !== null ? (
         <p
           className={cn(
@@ -249,12 +289,14 @@ function SaleCart({
       </div>
 
       {checkoutReady ? (
-        <CheckoutButtons
-          cartId={cart.cartId}
-          initialOrderId={inCheckout ? cart.paypalOrderId : null}
-          donationCents={donation.ok ? donation.cents : null}
-          disabled={lines.length === 0 || !donation.ok || releasing !== null}
-        />
+        <div ref={checkoutRef} tabIndex={-1} role="group" aria-label="Checkout">
+          <CheckoutButtons
+            cartId={cart.cartId}
+            initialOrderId={inCheckout ? cart.paypalOrderId : null}
+            donationCents={donation.ok ? donation.cents : null}
+            disabled={lines.length === 0 || !donation.ok || releasing !== null || startingOver}
+          />
+        </div>
       ) : (
         <p className="rounded-sticker bg-paper-deep p-3 text-sm text-ink-soft">Checkout is not set up here yet.</p>
       )}

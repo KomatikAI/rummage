@@ -43,6 +43,15 @@ curl -s -X POST "$BASE/api/paypal/create-order" -b "$COOKIE" \
 # -> {"orderId":"<ORDER-ID>","approveUrl":"https://www.sandbox.paypal.com/checkoutnow?token=<ORDER-ID>"}
 # Open approveUrl, log in as a sandbox buyer and approve.
 
+# Buyer: closed the checkout without paying? Put the cart back to open so its
+# items can be changed again (holds stay). Safe to repeat on an open cart.
+curl -s -X POST "$BASE/api/paypal/cancel" -b "$COOKIE" \
+  -H 'content-type: application/json' \
+  -d '{"cartId":"<cart-uuid>"}'
+# -> {"status":"open"}
+# 409 {"error":"capture_started","orderId":"<ORDER-ID>"} means a payment already
+# began: call capture below instead.
+
 # Buyer: capture the approved order. Each household gets its own status.
 curl -s -X POST "$BASE/api/paypal/capture" -b "$COOKIE" \
   -H 'content-type: application/json' \

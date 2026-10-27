@@ -15,9 +15,6 @@ who closes it and where.
 
 ## Checkout
 
-- **A cancelled checkout leaves the cart in `checkout`.** The buyer cannot remove items until the
-  expiry sweep abandons the cart (up to three hours). Retrying reuses the saved order id. Fix: a
-  `POST /api/paypal/cancel` that sets the cart back to `open` and releases nothing.
 - **A declined capture retried with the same request id** may return PayPal's cached error. Fix:
   derive the request id from cart id plus attempt count.
 - **Refunded items stay `sold`.** Nothing relists them.

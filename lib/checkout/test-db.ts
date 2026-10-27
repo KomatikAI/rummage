@@ -8,7 +8,7 @@ import type { Database } from "@/lib/supabase/types";
  * can assert on what was read and written without a database.
  */
 
-export type FakeFilter = { column: string; op: "eq" | "in"; value: unknown };
+export type FakeFilter = { column: string; op: "eq" | "in" | "is"; value: unknown };
 
 export type FakeQuery = {
   table: string;
@@ -57,6 +57,7 @@ export function fakeDb(resolve: QueryResolver = () => undefined, resolveRpc: Rpc
     });
     builder.eq = chain((column, value) => query.filters.push({ column: String(column), op: "eq", value }));
     builder.in = chain((column, value) => query.filters.push({ column: String(column), op: "in", value }));
+    builder.is = chain((column, value) => query.filters.push({ column: String(column), op: "is", value }));
     builder.order = chain(() => undefined);
     builder.limit = chain(() => undefined);
     builder.maybeSingle = chain(() => {

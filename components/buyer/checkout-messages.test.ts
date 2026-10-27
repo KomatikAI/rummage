@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cancelErrorMessage,
+  cancelOutcome,
   captureErrorMessage,
   createOrderErrorMessage,
   errorCode,
@@ -61,5 +63,29 @@ describe("error messages", () => {
     expect(createOrderErrorMessage(null)).toMatch(/Checkout could not start/);
     expect(captureErrorMessage("paypal_error")).toMatch(/could not confirm/);
     expect(captureErrorMessage(null)).toMatch(/order page/);
+    expect(createOrderErrorMessage("cart_in_checkout")).toMatch(/start over/);
+  });
+});
+
+describe("cancel", () => {
+  it("reads a reopened cart", () => {
+    expect(cancelOutcome({ ok: true, body: { status: "open" } })).toBe("reopened");
+  });
+
+  it("sends a started payment to the order page", () => {
+    expect(cancelOutcome({ ok: false, body: { error: "capture_started", orderId: "ORDER-1" } })).toBe("capture_started");
+  });
+
+  it("treats everything else as a failure", () => {
+    expect(cancelOutcome({ ok: true, body: { status: "checkout" } })).toBe("failed");
+    expect(cancelOutcome({ ok: true, body: null })).toBe("failed");
+    expect(cancelOutcome({ ok: false, body: { error: "cart_not_in_checkout" } })).toBe("failed");
+    expect(cancelOutcome({ ok: false, body: null })).toBe("failed");
+  });
+
+  it("maps cancel error codes and falls back for the rest", () => {
+    expect(cancelErrorMessage("cart_not_in_checkout")).toMatch(/no longer waiting/);
+    expect(cancelErrorMessage("database_error")).toMatch(/could not reopen/);
+    expect(cancelErrorMessage(null)).toMatch(/could not reopen/);
   });
 });

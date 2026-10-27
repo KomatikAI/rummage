@@ -1,6 +1,7 @@
 /**
  * Plain sentences for the checkout routes' error codes, and the narrow response shapes
- * the cart page reads from POST /api/paypal/create-order and /api/paypal/capture.
+ * the cart page reads from POST /api/paypal/create-order, /api/paypal/capture and
+ * /api/paypal/cancel.
  */
 
 export type CreateOrderResponse = { orderId: string; approveUrl: string | null };
@@ -50,6 +51,7 @@ const CREATE_ORDER_MESSAGES: Record<string, string> = {
   cart_empty: "Your cart is empty. Hold an item first.",
   cart_not_found: "We could not find this cart. Refresh the page and try again.",
   cart_not_open: "This cart is already at checkout. Refresh the page to pick up where you left off.",
+  cart_in_checkout: "This cart already has a checkout waiting. Pay it below, or start over to change your cart.",
   sale_not_open: "This sale is closed, so checkout is off.",
   sale_not_found: "This sale is no longer listed.",
   seller_not_ready: "One table in your cart cannot take payments yet. Remove its items and try again.",
@@ -75,5 +77,32 @@ export function captureErrorMessage(code: string | null): string {
   return (code && CAPTURE_MESSAGES[code]) || "We could not confirm the payment yet. Check your order page in a moment.";
 }
 
-export const CHECKOUT_CANCELLED_MESSAGE = "Checkout closed before paying. Your items are still held.";
+/** What a call to POST /api/paypal/cancel came to. */
+export type CancelOutcome = "reopened" | "capture_started" | "failed";
+
+/**
+ * "reopened" for 200 { status: "open" }; "capture_started" when a payment already
+ * began, so the buyer belongs on the order page instead; "failed" for anything else.
+ */
+export function cancelOutcome(result: { ok: boolean; body: unknown }): CancelOutcome {
+  if (result.ok) return isRecord(result.body) && result.body.status === "open" ? "reopened" : "failed";
+  return errorCode(result.body) === "capture_started" ? "capture_started" : "failed";
+}
+
+const CANCEL_MESSAGES: Record<string, string> = {
+  unauthorized: "Your sign-in has ended. Sign in again to change your cart.",
+  cart_not_found: "We could not find this cart. Refresh the page and try again.",
+  cart_not_in_checkout: "This cart is no longer waiting for payment. Refresh the page to see where it is.",
+};
+
+export function cancelErrorMessage(code: string | null): string {
+  return (code && CANCEL_MESSAGES[code]) || "We could not reopen your cart just now. Wait a moment and try again.";
+}
+
+export const CHECKOUT_CANCELLED_MESSAGE = "Checkout closed before paying. Your items are still held, and you can change your cart.";
+export const CHECKOUT_UNFINISHED_TITLE = "Your last checkout did not finish";
+export const CHECKOUT_UNFINISHED_TEXT =
+  "Your items are still held. Try again to pay the same order, or start over to change your cart.";
+export const CHECKOUT_TRY_AGAIN_LABEL = "Try again";
+export const CHECKOUT_START_OVER_LABEL = "Start over";
 export const CHECKOUT_ERROR_MESSAGE = "Checkout ran into a problem and nothing was charged. Try again.";

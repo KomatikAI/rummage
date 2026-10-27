@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { captureStarted } from "@/lib/checkout/cancel";
 import {
   appBaseUrl,
   databaseError,
@@ -51,6 +52,18 @@ export async function POST(request: Request): Promise<Response> {
   if (cart.error) return databaseError("load cart", cart.error);
   if (!cart.data) return jsonError(404, "cart_not_found", "No such cart.");
   if (cart.data.buyer_user_id !== userId) return jsonError(403, "forbidden", "This cart belongs to someone else.");
+  if (cart.data.status === "checkout") {
+    // A checkout the buyer closed before paying. Say so, so the cart page can offer
+    // POST /api/paypal/cancel; never cancel it from here.
+    const units = await admin.from("purchase_units").select("capture_id, capture_status").eq("cart_id", cartId);
+    if (units.error) return databaseError("load purchase units", units.error);
+    if (!(units.data ?? []).some(captureStarted)) {
+      return jsonError(409, "cart_in_checkout", "The cart already has a checkout waiting.", {
+        cartId,
+        canCancel: true,
+      });
+    }
+  }
   if (cart.data.status !== "open") {
     return jsonError(409, "cart_not_open", `The cart is ${cart.data.status} and cannot start a checkout.`);
   }
