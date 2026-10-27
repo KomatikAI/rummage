@@ -1,0 +1,3 @@
+-- Rummage seed data for local development.
+-- Loaded by `supabase db reset` / `supabase start` after the migrations in supabase/migrations.
+-- Demo sale, households and listings will be added here. No real personal data.
