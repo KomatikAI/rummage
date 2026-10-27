@@ -1,26 +1,111 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * Rummage design tokens. Light mode only. docs/DESIGN.md says what each one means.
+ *
+ * The default Tailwind palette is switched off so pages can only reach these colours:
+ * `bg-paper`, `text-ink`, `bg-accent`, `text-held`, `border-line` and so on.
+ */
+@theme {
+  --color-*: initial;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Surfaces */
+  --color-paper: #fbf6ec;
+  --color-paper-deep: #f3eada;
+  --color-surface: #fffdf8;
+  --color-white: #ffffff;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Text */
+  --color-ink: #2a2520;
+  --color-ink-soft: #5c544b;
+  --color-ink-faint: #786e63;
+
+  /* Neutral greys (warm) */
+  --color-grey-100: #efe8dc;
+  --color-grey-200: #e4d9c6;
+  --color-grey-300: #cfc3af;
+  --color-grey-500: #8a8178;
+  --color-grey-700: #4a433c;
+  --color-line: #e4d9c6;
+
+  /* The price sticker: one accent */
+  --color-accent: #d23f22;
+  --color-accent-strong: #ad3219;
+  --color-accent-soft: #fbe2d8;
+  --color-on-accent: #ffffff;
+
+  /* Status */
+  --color-ready: #2f7a4d;
+  --color-ready-strong: #23603b;
+  --color-ready-soft: #dcefe2;
+  --color-on-ready: #ffffff;
+  --color-held: #8a5d0c;
+  --color-held-soft: #f6e7c4;
+  --color-danger: #a3271a;
+  --color-danger-strong: #841e13;
+  --color-danger-soft: #f8dcd6;
+  --color-on-danger: #ffffff;
+
+  /* Type */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+
+  /* Layout sizes (spacing scale stays Tailwind's 0.25rem step) */
+  --spacing-gutter: 1rem;
+  --spacing-tap: 2.75rem;
+  --spacing-topbar: 3.5rem;
+  --spacing-tabbar: calc(4rem + env(safe-area-inset-bottom, 0px));
+  --container-content: 40rem;
+  --container-wide: 64rem;
+
+  /* Shape */
+  --radius-field: 0.75rem;
+  --radius-sticker: 1.25rem;
+  --radius-pill: 9999px;
+  --shadow-sticker: 0 1px 0 rgb(42 37 32 / 0.05), 0 8px 20px -10px rgb(42 37 32 / 0.28);
+
+  /* Motion */
+  --animate-sheet-up: sheet-up 180ms ease-out;
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(1.5rem);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* The display face is loaded by next/font in app/layout.tsx as --font-display-face. */
+@theme inline {
+  --font-display: var(--font-display-face), Georgia, "Times New Roman", serif;
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html:has(dialog[open]) {
+    overflow: hidden;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 }
