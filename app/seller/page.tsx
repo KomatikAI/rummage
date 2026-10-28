@@ -76,6 +76,10 @@ async function SellerDashboard({ searchParams }: { searchParams: SearchParams })
 
         <PayPalCard household={household} />
 
+        <ButtonLink href={`/seller/sign${query}`} variant="secondary" size="sm" className="self-start">
+          Print your table sign
+        </ButtonLink>
+
         {waiting > 0 ? (
           <ButtonLink href={`/seller/pickup${query}`} variant="secondary" fullWidth>
             {waiting === 1 ? "Hand over 1 paid item" : `Hand over ${waiting} paid items`}

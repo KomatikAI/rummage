@@ -92,9 +92,14 @@ async function SaleContent({ params }: { params: PageProps<"/sale/[slug]">["para
         title={sale.name}
         description={fundraiser ?? sale.description}
         actions={
-          <ButtonLink href={`/buyer/assistant?sale=${encodeURIComponent(sale.slug)}`} variant="secondary" size="sm">
-            Ask the shopping helper
-          </ButtonLink>
+          <>
+            <ButtonLink href={`/buyer/assistant?sale=${encodeURIComponent(sale.slug)}`} variant="secondary" size="sm">
+              Ask the shopping helper
+            </ButtonLink>
+            <ButtonLink href={`/sale/${encodeURIComponent(sale.slug)}/scan`} variant="secondary" size="sm">
+              Scan a table
+            </ButtonLink>
+          </>
         }
       />
       {sale.status !== "open" ? (
