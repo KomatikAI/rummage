@@ -5,14 +5,16 @@ who closes it and where.
 
 ## Before the first sandbox run
 
-- **The SQL has never run.** The four migrations and `supabase/seed.sql` were self-reviewed only.
-  First spike step: `supabase link`, `supabase db push`, load the seed, replace the three
-  `SANDBOX_SELLER_*` merchant ids and set `organizer_merchant_id`. See `supabase/README.md`.
-- **Scheduled release of expired holds needs `pg_cron`.** The Nov 4 migration schedules
-  `release_expired_holds()` every minute when it can enable `pg_cron`, and `hold_item` frees an
-  expired hold on the item it is asked for, and create-order runs the sweep before it claims a
-  cart, so an expired line is never charged. If the migration prints a notice that `pg_cron` is
-  not available, add the cron line from the README another way.
+- **PayPal merchant ids are still placeholders.** All seven migrations and `supabase/seed.sql`
+  were applied to the hosted Supabase project on 2026-11-04 (every statement ran clean; `pg_cron`
+  installed and the minute sweep is scheduled). The three linked seed households still carry
+  `SANDBOX_SELLER_1..3` and `sales.organizer_merchant_id` is null until the sandbox seller
+  accounts exist. See `supabase/README.md` for the update statements.
+- **Scheduled release of expired holds runs on `pg_cron`.** The hosted project has the
+  `rummage-release-expired-holds` job every minute. `hold_item` also frees an expired hold on the
+  item it is asked for, and create-order runs the sweep before it claims a cart, so an expired
+  line is never charged. A project without `pg_cron` needs the cron line from the README another
+  way.
 
 ## Checkout
 
