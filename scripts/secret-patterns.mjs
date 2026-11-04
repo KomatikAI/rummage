@@ -9,12 +9,14 @@ const join = (...parts) => parts.join("");
 export const SECRET_VARIABLES = [
   "PAYPAL_CLIENT_SECRET",
   "SUPABASE_SERVICE_ROLE_KEY",
+  "OPENROUTER_API_KEY",
   "ANTHROPIC_API_KEY",
 ];
 
 /** @type {{ name: string, regex: RegExp }[]} */
 export const SECRET_PATTERNS = [
   { name: "Supabase secret key", regex: new RegExp(join("sb_", "secret_")) },
+  { name: "OpenRouter API key", regex: new RegExp(join("sk-", "or-v1-")) },
   { name: "Anthropic API key", regex: new RegExp(join("sk-", "ant-")) },
   {
     name: "private key block",

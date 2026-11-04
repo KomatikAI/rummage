@@ -1,21 +1,19 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type { LanguageModel, ModelMessage } from "ai";
 
-import { env } from "@/lib/env";
-
+import { generateStructured, openRouterModel, SCAN_MODEL, type StructuredCall, type StructuredFailureCode } from "./openrouter";
 import { hasAtMostTwoDecimals } from "./schemas";
-import { PRICING_FALLBACK_BETA, type PricingClient } from "./pricing";
-import { ScanReply, scanReplyOutputFormat, type ScanConfidence } from "./scan-schema";
+import { ScanReply, scanReplyJsonSchema, type ScanConfidence } from "./scan-schema";
 
 /**
  * Scan matching ("point and price"): one camera frame from a buyer at a table, plus the
  * listed items at that table, in; which listed item the frame shows (or a rough estimate
  * for something that is not listed) out. One frame per call, no tracking between frames.
  *
- * Candidate photos go first, as URL image blocks, with a cache breakpoint on the last one,
- * so repeated scans at the same table reuse the cached prefix and only the frame is new.
+ * Candidate photos go first, as URL file parts, then the frame, so repeated scans at the
+ * same table share a prefix the provider can cache and only the frame is new.
  */
 
-export const SCAN_MODEL = "claude-opus-5-5";
+export { SCAN_MODEL };
 export const SCAN_EFFORT = "low" as const;
 export const SCAN_MAX_TOKENS = 4000;
 /** The most listed items one scan compares against. */
@@ -65,18 +63,11 @@ export interface ScanMatchResult {
 }
 
 export interface ScanMatchDeps {
-  client?: PricingClient;
+  /** Override the model; tests pass a `MockLanguageModelV4`. */
+  model?: LanguageModel;
 }
 
-export type ScanMatchErrorCode =
-  | "too_many_candidates"
-  | "no_frame"
-  | "refusal"
-  | "max_tokens"
-  | "context_window_exceeded"
-  | "no_output"
-  | "invalid_json"
-  | "invalid_output";
+export type ScanMatchErrorCode = "too_many_candidates" | "no_frame" | StructuredFailureCode;
 
 export class ScanMatchError extends Error {
   readonly code: ScanMatchErrorCode;
@@ -98,8 +89,8 @@ export class ScanMatchError extends Error {
   }
 }
 
-type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
-type ContentBlock = Anthropic.Beta.Messages.BetaContentBlockParam;
+type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
+type ContentPart = Exclude<UserContent, string>[number];
 
 export const SCAN_SYSTEM_PROMPT = `You help shoppers at a US community yard sale. A shopper is standing at a seller's table and points their phone camera at one thing. You say which of the table's listed items it is.
 
@@ -152,45 +143,35 @@ export function candidateLabel(candidate: ScanCandidate, n: number): string {
 const INSTRUCTION =
   "The image above is the shopper's camera frame. Which listed item does it show? Reply with the JSON object only.";
 
-/** Builds the exact Messages API request; exported so tests can inspect it. */
-export function buildScanRequest(input: MatchFrameInput): CreateParams {
-  const candidateBlocks: ContentBlock[] = [];
+/** Builds the exact request; exported so tests can inspect it. */
+export function buildScanRequest(input: MatchFrameInput): StructuredCall {
+  const candidateParts: ContentPart[] = [];
   input.candidates.forEach((candidate, index) => {
-    candidateBlocks.push({ type: "text", text: candidateLabel(candidate, index + 1) });
+    candidateParts.push({ type: "text", text: candidateLabel(candidate, index + 1) });
     if (candidate.photoUrl) {
-      candidateBlocks.push({ type: "image", source: { type: "url", url: candidate.photoUrl } });
+      candidateParts.push({ type: "file", data: new URL(candidate.photoUrl), mediaType: "image/*" });
     }
   });
-
-  const last = candidateBlocks[candidateBlocks.length - 1];
-  if (last) {
-    // The breakpoint caches the system prompt and every candidate; only the frame varies.
-    candidateBlocks[candidateBlocks.length - 1] = { ...last, cache_control: { type: "ephemeral" } } as ContentBlock;
-  } else {
-    candidateBlocks.push({ type: "text", text: "No items are listed at this table." });
+  if (candidateParts.length === 0) {
+    candidateParts.push({ type: "text", text: "No items are listed at this table." });
   }
 
   return {
-    model: SCAN_MODEL,
-    max_tokens: SCAN_MAX_TOKENS,
-    betas: [PRICING_FALLBACK_BETA],
-    fallbacks: "default",
-    thinking: { type: "adaptive" },
-    output_config: { effort: SCAN_EFFORT, format: scanReplyOutputFormat },
     system: SCAN_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
         content: [
-          ...candidateBlocks,
-          {
-            type: "image",
-            source: { type: "base64", media_type: input.mediaType, data: input.frameBase64 },
-          },
+          ...candidateParts,
+          { type: "file", data: input.frameBase64, mediaType: input.mediaType },
           { type: "text", text: INSTRUCTION },
         ],
       },
     ],
+    maxOutputTokens: SCAN_MAX_TOKENS,
+    effort: SCAN_EFFORT,
+    schemaName: "scan_reply",
+    schema: scanReplyJsonSchema,
   };
 }
 
@@ -255,13 +236,6 @@ export function sanitizeScanReply(reply: ScanReply, candidateIds: ReadonlySet<st
   return { match, alternatives, notListed };
 }
 
-let defaultClient: PricingClient | undefined;
-
-function getDefaultClient(): PricingClient {
-  defaultClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  return defaultClient;
-}
-
 /** Matches one camera frame to a table's listed items. Throws `ScanMatchError` on any unusable reply. */
 export async function matchFrameToListings(
   input: MatchFrameInput,
@@ -277,45 +251,14 @@ export async function matchFrameToListings(
     throw new ScanMatchError("no_frame", "frameBase64 is empty");
   }
 
-  const client = deps.client ?? getDefaultClient();
-  const response = await client.beta.messages.create(buildScanRequest(input));
-
-  switch (response.stop_reason) {
-    case "refusal":
-      throw new ScanMatchError("refusal", "Claude declined to match this frame", {
-        stopReason: response.stop_reason,
-        stopDetails: response.stop_details,
-      });
-    case "max_tokens":
-      throw new ScanMatchError("max_tokens", "The scan reply was cut off at max_tokens", {
-        stopReason: response.stop_reason,
-      });
-    case "model_context_window_exceeded":
-      throw new ScanMatchError("context_window_exceeded", "The scan request exceeded the model context window", {
-        stopReason: response.stop_reason,
-      });
-    default:
-      break;
-  }
-
-  const text = response.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
-  if (!text.trim()) {
-    throw new ScanMatchError("no_output", "The scan reply had no text block", { stopReason: response.stop_reason });
-  }
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw new ScanMatchError("invalid_json", "The scan reply was not valid JSON", { stopReason: response.stop_reason });
-  }
-
-  const parsed = ScanReply.safeParse(raw);
-  if (!parsed.success) {
-    throw new ScanMatchError("invalid_output", "The scan reply did not match the ScanReply schema", {
-      stopReason: response.stop_reason,
-      issues: parsed.error.issues,
+  const model = deps.model ?? openRouterModel(SCAN_MODEL);
+  const result = await generateStructured(model, buildScanRequest(input), (raw) => ScanReply.safeParse(raw));
+  if (!result.ok) {
+    throw new ScanMatchError(result.code, `Scan: ${result.message}`, {
+      stopReason: result.stopReason,
+      stopDetails: result.code === "refusal" ? result.details : undefined,
+      issues: result.code === "invalid_output" ? result.details : undefined,
     });
   }
-  return sanitizeScanReply(parsed.data, new Set(input.candidates.map((candidate) => candidate.id)));
+  return sanitizeScanReply(result.value, new Set(input.candidates.map((candidate) => candidate.id)));
 }

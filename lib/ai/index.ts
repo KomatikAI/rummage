@@ -13,19 +13,28 @@ export {
   ListingDraft,
   ListingDraftObject,
   listingDraftJsonSchema,
-  listingDraftOutputFormat,
   LISTING_CATEGORIES,
   LISTING_CONDITIONS,
 } from "./schemas";
 
 export {
+  ASSISTANT_MODEL,
+  openRouterModel,
+  PRICING_MODEL,
+  SCAN_MODEL,
+  SCREEN_MODEL,
+  type ReasoningEffort,
+  type StructuredCall,
+  type StructuredFailureCode,
+} from "./openrouter";
+
+export {
   buildPricingRequest,
   priceFromPhoto,
   PricingError,
-  PRICING_MODEL,
+  PRICING_EFFORT,
   PRICING_SYSTEM_PROMPT,
   type PriceFromPhotoInput,
-  type PricingClient,
   type PricingDeps,
   type PricingErrorCode,
   type PricingMediaType,
@@ -36,11 +45,10 @@ export {
   detectImageMediaType,
   ListingScreen,
   listingScreenJsonSchema,
-  listingScreenOutputFormat,
   screenListing,
   SCREEN_DEFAULT_REASON,
+  SCREEN_EFFORT,
   SCREEN_MAX_IMAGE_BYTES,
-  SCREEN_MODEL,
   SCREEN_SYSTEM_PROMPT,
   SCREEN_UNCHECKED_REASON,
   type ScreenListingDeps,
@@ -64,7 +72,7 @@ export {
 } from "./shopping-tools";
 
 export {
-  ASSISTANT_MODEL,
+  assistantCallOptions,
   CART_PATH,
   generateShoppingReply,
   runShoppingAssistant,

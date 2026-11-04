@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /**
  * Shared zod schemas for lane D (AI). `ListingDraft` is the structured output
- * Claude returns when it prices an item from one seller photo.
+ * the pricing model returns when it prices an item from one seller photo.
  */
 
 export const LISTING_CATEGORIES = [
@@ -181,16 +181,10 @@ ${note}` : note;
 }
 
 /**
- * JSON schema for `output_config.format`, generated from `ListingDraftObject`
+ * JSON schema sent as the response format, generated from `ListingDraftObject`
  * with `z.toJSONSchema` (inlined, no `$defs`) and reduced to the keywords
- * structured outputs supports.
+ * strict structured outputs support.
  */
 export const listingDraftJsonSchema = toStructuredOutputSchema(
   z.toJSONSchema(ListingDraftObject, { reused: "inline", io: "output" }),
 ) as Record<string, unknown>;
-
-/** The exact `output_config.format` value sent with a pricing request. */
-export const listingDraftOutputFormat = {
-  type: "json_schema" as const,
-  schema: listingDraftJsonSchema,
-};
