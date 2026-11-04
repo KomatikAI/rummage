@@ -19,7 +19,7 @@ vi.mock("@/lib/ai/scan-match", async () => {
 import { matchFrameToListings, ScanMatchError, type ScanMatchResult } from "@/lib/ai/scan-match";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-import { scanRateLimiter } from "./rate-limit";
+import { scanRateLimiter } from "@/lib/rate-limit";
 import { POST } from "./route";
 
 const SLUG = "forest-park";

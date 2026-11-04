@@ -15,7 +15,7 @@ import { jsonError, readJsonBody } from "@/lib/repos/http";
 import { getPublicListings } from "@/lib/supabase/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-import { scanRateLimiter } from "./rate-limit";
+import { scanRateLimiter } from "@/lib/rate-limit";
 
 /**
  * POST one camera frame from a buyer at a table -> which listed item it shows.
@@ -26,7 +26,7 @@ import { scanRateLimiter } from "./rate-limit";
  * `SCAN_MAX_CANDIDATES` scannable items (otherwise 400 `pick_a_table` with the tables).
  *
  * The frame is capped at 1.5 MB, goes to the model and is dropped: it is never logged or
- * stored. Calls are rate limited per user, per server instance (see ./rate-limit.ts).
+ * stored. Calls are rate limited per user, per server instance (see lib/rate-limit.ts).
  */
 
 const MAX_FRAME_BYTES = 1.5 * 1024 * 1024;

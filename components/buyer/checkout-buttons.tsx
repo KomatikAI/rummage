@@ -25,8 +25,25 @@ import {
   type CancelOutcome,
 } from "./checkout-messages";
 
-/** Loads the checkout script once for the page. No merchant ids here: the server builds the order. */
-export function CheckoutProvider({ clientId, children }: { clientId: string; children: ReactNode }) {
+/**
+ * Loads the checkout script for one cart. PayPal's multi-seller checkout needs every
+ * payee of the order on the script: one id goes in merchant-id, two or more go in
+ * data-merchant-id with merchant-id=* (the SDK wrapper does this when given an array).
+ * The list must match the payees of the order the server builds, so callers key this
+ * provider by the list and it reloads when the list changes.
+ */
+export function CheckoutProvider({
+  clientId,
+  merchantIds,
+  namespace,
+  children,
+}: {
+  clientId: string;
+  merchantIds: string[];
+  /** A global name for this cart's script, so carts with different payees don't share one. */
+  namespace: string;
+  children: ReactNode;
+}) {
   const options: ReactPayPalScriptOptions = {
     clientId,
     currency: "USD",
@@ -34,8 +51,24 @@ export function CheckoutProvider({ clientId, children }: { clientId: string; chi
     enableFunding: "venmo",
     buyerCountry: "US",
     components: "buttons",
+    dataNamespace: namespace,
+    ...(merchantIds.length > 0 ? { merchantId: merchantIds } : {}),
   };
   return <PayPalScriptProvider options={options}>{children}</PayPalScriptProvider>;
+}
+
+/** The payees PayPal will see for this cart: sellers, plus the organizer when there is a gift. */
+export function checkoutMerchantIds(sellerMerchantIds: string[], organizerMerchantId: string | null, giftAdded: boolean): string[] {
+  const ids = new Set(sellerMerchantIds);
+  if (organizerMerchantId && giftAdded) ids.add(organizerMerchantId);
+  return [...ids].sort();
+}
+
+/** A valid JS identifier for one cart and payee list, used as the script's namespace. */
+export function checkoutNamespace(cartId: string, merchantIds: string[]): string {
+  let hash = 5381;
+  for (const char of `${cartId}|${merchantIds.join(",")}`) hash = ((hash * 33) ^ char.charCodeAt(0)) >>> 0;
+  return `paypal_${hash.toString(36)}`;
 }
 
 type Notice = { tone: "info" | "error"; text: string; showOrderLink?: boolean };

@@ -1,7 +1,11 @@
 /** The fetch implementation every PayPal module uses. Tests swap it out. */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-const defaultFetch: FetchLike = (input, init) => fetch(input, init);
+/** Longest one PayPal call may take; a hung call would otherwise hold the route open. */
+export const PAYPAL_TIMEOUT_MS = 30_000;
+
+const defaultFetch: FetchLike = (input, init) =>
+  fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(PAYPAL_TIMEOUT_MS) });
 
 let current: FetchLike = defaultFetch;
 

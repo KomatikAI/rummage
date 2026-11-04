@@ -162,6 +162,8 @@ export type ItemRow = {
   prohibited_reason: string | null;
   created_at: string;
   updated_at: string;
+  /** Set by the server when the prohibited-item screen passes; cleared when a client edits what was screened. Service role writes. */
+  screened_at: string | null;
 };
 
 export type CartRow = {
@@ -540,6 +542,7 @@ export const TABLE_COLUMNS = {
     "prohibited_reason",
     "created_at",
     "updated_at",
+    "screened_at",
   ]),
   carts: columns<CartRow>()([
     "id",

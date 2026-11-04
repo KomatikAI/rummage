@@ -113,23 +113,23 @@ describe("runOrganizerAssistant", () => {
   });
 
   it("adds read-only PayPal tools when given", async () => {
-    const listTx = fakePayPalTool("list_transactions");
+    const listTx = fakePayPalTool("get_order");
     const model = new MockLanguageModelV4({
-      doGenerate: [toolCallResult("list_transactions", {}), textResult("No transactions yet.")],
+      doGenerate: [toolCallResult("get_order", {}), textResult("No transactions yet.")],
     });
     const reply = await runOrganizerAssistant(
       {
         question: "Any PayPal transactions?",
         repo: fakeRepo(),
         saleId: "sale-1",
-        paypalTools: { list_transactions: listTx.tool },
+        paypalTools: { get_order: listTx.tool },
       },
       { model },
     );
     expect(listTx.execute).toHaveBeenCalledTimes(1);
     expect(reply.text).toBe("No transactions yet.");
     const names = (model.doGenerateCalls[0].tools ?? []).map((t) => ("name" in t ? t.name : ""));
-    expect(names).toContain("list_transactions");
+    expect(names).toContain("get_order");
     expect(JSON.stringify(model.doGenerateCalls[0].prompt[0])).toContain("PayPal sandbox");
   });
 
@@ -165,6 +165,6 @@ describe("runOrganizerAssistant", () => {
   it("prompt states read-only and names its sources", () => {
     expect(organizerSystemPrompt(false)).toContain("You can read, not change");
     expect(organizerSystemPrompt(false)).toContain("not available");
-    expect(organizerSystemPrompt(true)).toContain("list_transactions");
+    expect(organizerSystemPrompt(true)).toContain("get_order");
   });
 });

@@ -8,6 +8,7 @@ import { canDonate } from "@/components/buyer/sale-info";
 import { Badge, ButtonLink, EmptyState, PageContainer, PageHeader, Spinner } from "@/components/ui";
 import { env } from "@/lib/env";
 import { currentUserId } from "@/lib/repos";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient, type RummageClient } from "@/lib/supabase/server";
 import type { CartStatus } from "@/lib/supabase/types";
 
@@ -56,6 +57,8 @@ async function loadCarts(db: RummageClient, userId: string): Promise<CartData[] 
   if (sales.error || listings.error) return null;
 
   const saleById = new Map(sales.data.map((sale) => [sale.id, sale]));
+  const payees = await loadPayees(carts.data);
+  if (payees === null) return null;
   const listingById = new Map((listings.data ?? []).map((listing) => [listing.item_id, listing]));
 
   const result: CartData[] = [];
@@ -73,6 +76,8 @@ async function loadCarts(db: RummageClient, userId: string): Promise<CartData[] 
         fundraiserGoal: sale.fundraiser_goal === null ? null : Number(sale.fundraiser_goal),
         canDonate: canDonate(sale),
       },
+      sellerMerchantIds: payees.sellers.get(cart.id) ?? [],
+      organizerMerchantId: canDonate(sale) ? (payees.organizers.get(cart.sale_id) ?? null) : null,
       lines: cart.cart_lines
         .filter((line) => line.active)
         .map((line) => {
@@ -90,6 +95,70 @@ async function loadCarts(db: RummageClient, userId: string): Promise<CartData[] 
     });
   }
   return result;
+}
+
+type CartRow = {
+  id: string;
+  sale_id: string;
+  status: string;
+  cart_lines: { household_id: string; active: boolean }[];
+};
+
+/**
+ * The PayPal payees of each cart, read with the service role because buyers can't see
+ * merchant ids. The ids go to this buyer's browser only because PayPal's script needs
+ * them for a multi-seller checkout; they are the same payees the order shows.
+ * A cart in checkout uses the payees of its saved order. An open cart uses the ready
+ * sellers of its active lines, as create-order does; the organizer is added in the
+ * browser only when the buyer adds a gift.
+ */
+async function loadPayees(carts: CartRow[]): Promise<{ sellers: Map<string, string[]>; organizers: Map<string, string> } | null> {
+  const admin = createSupabaseAdminClient();
+  const checkoutIds = carts.filter((cart) => cart.status === "checkout").map((cart) => cart.id);
+  const householdIds = [
+    ...new Set(
+      carts
+        .filter((cart) => cart.status === "open")
+        .flatMap((cart) => cart.cart_lines.filter((line) => line.active).map((line) => line.household_id)),
+    ),
+  ];
+  const saleIds = [...new Set(carts.map((cart) => cart.sale_id))];
+
+  const [units, households, sales] = await Promise.all([
+    checkoutIds.length > 0
+      ? admin.from("purchase_units").select("cart_id, merchant_id").in("cart_id", checkoutIds)
+      : Promise.resolve({ data: [], error: null }),
+    householdIds.length > 0
+      ? admin.from("households").select("id, merchant_id_in_paypal, paypal_status, paused").in("id", householdIds)
+      : Promise.resolve({ data: [], error: null }),
+    admin.from("sales").select("id, organizer_merchant_id").in("id", saleIds),
+  ]);
+  if (units.error || households.error || sales.error) return null;
+
+  const readyMerchant = new Map(
+    (households.data ?? [])
+      .filter((household) => !household.paused && household.paypal_status === "ready" && household.merchant_id_in_paypal)
+      .map((household) => [household.id, household.merchant_id_in_paypal as string]),
+  );
+
+  const sellers = new Map<string, string[]>();
+  for (const cart of carts) {
+    const ids =
+      cart.status === "checkout"
+        ? (units.data ?? []).filter((unit) => unit.cart_id === cart.id).map((unit) => unit.merchant_id)
+        : cart.cart_lines
+            .filter((line) => line.active)
+            .map((line) => readyMerchant.get(line.household_id))
+            .filter((id): id is string => Boolean(id));
+    sellers.set(cart.id, [...new Set(ids)]);
+  }
+
+  const organizers = new Map(
+    (sales.data ?? [])
+      .filter((sale) => sale.organizer_merchant_id)
+      .map((sale) => [sale.id, sale.organizer_merchant_id as string]),
+  );
+  return { sellers, organizers };
 }
 
 async function CartContent() {

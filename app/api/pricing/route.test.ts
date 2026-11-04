@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeSupabase } from "@/lib/repos/test-utils";
 
@@ -17,6 +17,7 @@ vi.mock("@/lib/ai/pricing", async () => {
 
 import { priceFromPhoto, PricingError } from "@/lib/ai/pricing";
 import { validDraft } from "@/lib/ai/test-utils";
+import { pricingRateLimiter } from "@/lib/rate-limit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { POST } from "./route";
@@ -45,12 +46,27 @@ function postForm(form: FormData) {
 type Draft = Awaited<ReturnType<typeof priceFromPhoto>>;
 
 beforeEach(() => {
+  pricingRateLimiter.reset();
+  vi.spyOn(pricingRateLimiter, "check").mockReturnValue({ ok: true });
   vi.mocked(priceFromPhoto).mockReset();
   vi.mocked(priceFromPhoto).mockResolvedValue(validDraft as unknown as Draft);
   signedIn();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("POST /api/pricing", () => {
+  it("429s a second photo inside 3 s, after the first one priced", async () => {
+    vi.mocked(pricingRateLimiter.check).mockRestore();
+    signedIn();
+    expect((await postJson({ imageBase64: smallPng, mediaType: "image/png" })).status).toBe(200);
+    const res = await postJson({ imageBase64: smallPng, mediaType: "image/png" });
+    expect(res.status).toBe(429);
+    expect(priceFromPhoto).toHaveBeenCalledTimes(1);
+  });
+
   it("401s when signed out", async () => {
     signedIn(null);
     expect((await postJson({ imageBase64: smallPng, mediaType: "image/png" })).status).toBe(401);

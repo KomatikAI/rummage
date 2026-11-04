@@ -16,11 +16,11 @@ describe("captureStarted", () => {
 
 describe("decideCancel", () => {
   it("cancels a checkout cart whose units are all pending", () => {
-    expect(decideCancel({ status: "checkout", paypalOrderId: "ORDER-1", units: [pending, pending] })).toEqual({ kind: "cancel" });
+    expect(decideCancel({ status: "checkout", paypalOrderId: "ORDER-1", units: [pending, pending], captureAttempts: 0 })).toEqual({ kind: "cancel" });
   });
 
   it("cancels a checkout cart that never got an order or units", () => {
-    expect(decideCancel({ status: "checkout", paypalOrderId: null, units: [] })).toEqual({ kind: "cancel" });
+    expect(decideCancel({ status: "checkout", paypalOrderId: null, units: [], captureAttempts: 0 })).toEqual({ kind: "cancel" });
   });
 
   it("refuses once any unit has a capture, whatever its status", () => {
@@ -29,20 +29,26 @@ describe("decideCancel", () => {
       { capture_id: "CAP-1", capture_status: "PENDING" },
       { capture_id: null, capture_status: "FAILED" },
     ]) {
-      expect(decideCancel({ status: "checkout", paypalOrderId: "ORDER-1", units: [pending, unit] })).toEqual({
+      expect(decideCancel({ status: "checkout", paypalOrderId: "ORDER-1", units: [pending, unit], captureAttempts: 0 })).toEqual({
         kind: "capture_started",
       });
     }
   });
 
+  it("refuses while a capture is in flight, before PayPal has answered", () => {
+    expect(decideCancel({ status: "checkout", paypalOrderId: "ORDER-1", units: [pending], captureAttempts: 1 })).toEqual({
+      kind: "capture_started",
+    });
+  });
+
   it("treats an open cart with no order as already cancelled", () => {
-    expect(decideCancel({ status: "open", paypalOrderId: null, units: [] })).toEqual({ kind: "already_open" });
+    expect(decideCancel({ status: "open", paypalOrderId: null, units: [], captureAttempts: 0 })).toEqual({ kind: "already_open" });
   });
 
   it("refuses every other cart", () => {
-    expect(decideCancel({ status: "open", paypalOrderId: "ORDER-1", units: [] })).toEqual({ kind: "not_in_checkout" });
+    expect(decideCancel({ status: "open", paypalOrderId: "ORDER-1", units: [], captureAttempts: 0 })).toEqual({ kind: "not_in_checkout" });
     for (const status of ["paid", "partial", "failed", "abandoned"] as const) {
-      expect(decideCancel({ status, paypalOrderId: "ORDER-1", units: [pending] })).toEqual({ kind: "not_in_checkout" });
+      expect(decideCancel({ status, paypalOrderId: "ORDER-1", units: [pending], captureAttempts: 0 })).toEqual({ kind: "not_in_checkout" });
     }
   });
 });

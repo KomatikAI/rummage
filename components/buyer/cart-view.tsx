@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 
 import { releaseHoldAction } from "@/app/buyer/cart/actions";
 import { Button, ButtonLink, Card, CardTitle, cn, EmptyState, Field, formatMoney, Input, Money } from "@/components/ui";
@@ -20,7 +20,7 @@ import {
   type CartItemLine,
   type DonationChoice,
 } from "./cart";
-import { cancelCheckout, CheckoutButtons, CheckoutProvider } from "./checkout-buttons";
+import { cancelCheckout, CheckoutButtons, checkoutMerchantIds, checkoutNamespace, CheckoutProvider } from "./checkout-buttons";
 import {
   CHECKOUT_START_OVER_LABEL,
   CHECKOUT_TRY_AGAIN_LABEL,
@@ -45,6 +45,13 @@ export type CartData = {
     canDonate: boolean;
   };
   lines: CartItemLine[];
+  /**
+   * PayPal merchant ids of the sellers this cart pays. For a cart in checkout these are
+   * the payees of the order already made (its gift unit included).
+   */
+  sellerMerchantIds: string[];
+  /** The organizer's merchant id when a gift can be added at checkout, else null. */
+  organizerMerchantId: string | null;
 };
 
 export interface CartViewProps {
@@ -64,30 +71,28 @@ const chipClasses = (active: boolean) =>
 /** Every live cart the buyer has (one per sale), each with its own checkout. */
 export function CartView({ carts, clientId, testMode }: CartViewProps) {
   return (
-    <CheckoutProvider clientId={clientId}>
-      <div className="flex flex-col gap-8">
-        {carts.map((cart) => (
-          <SaleCart
-            key={cart.cartId}
-            cart={cart}
-            checkoutReady={clientId.length > 0}
-            showSaleName={carts.length > 1}
-            testMode={testMode}
-          />
-        ))}
-      </div>
-    </CheckoutProvider>
+    <div className="flex flex-col gap-8">
+      {carts.map((cart) => (
+        <SaleCart
+          key={cart.cartId}
+          cart={cart}
+          clientId={clientId}
+          showSaleName={carts.length > 1}
+          testMode={testMode}
+        />
+      ))}
+    </div>
   );
 }
 
 function SaleCart({
   cart,
-  checkoutReady,
+  clientId,
   showSaleName,
   testMode,
 }: {
   cart: CartData;
-  checkoutReady: boolean;
+  clientId: string;
   showSaleName: boolean;
   testMode: boolean;
 }) {
@@ -112,6 +117,15 @@ function SaleCart({
   const showDonation = cart.sale.canDonate && !inCheckout;
   const donation = showDonation ? donationCents(choice, custom) : ({ ok: true, cents: 0 } as const);
   const total = grandTotal(subtotal, donation.ok ? donation.cents : 0);
+
+  const checkoutReady = clientId.length > 0;
+  // Only changes when the gift goes between none and some, so typing an amount doesn't reload.
+  const giftAdded = showDonation && donation.ok && donation.cents > 0;
+  const merchantIds = useMemo(
+    () => checkoutMerchantIds(cart.sellerMerchantIds, inCheckout ? null : cart.organizerMerchantId, giftAdded),
+    [cart.sellerMerchantIds, cart.organizerMerchantId, inCheckout, giftAdded],
+  );
+  const namespace = checkoutNamespace(cart.cartId, merchantIds);
 
   function release(itemId: string) {
     setMessage(null);
@@ -290,12 +304,14 @@ function SaleCart({
 
       {checkoutReady ? (
         <div ref={checkoutRef} tabIndex={-1} role="group" aria-label="Checkout">
-          <CheckoutButtons
-            cartId={cart.cartId}
-            initialOrderId={inCheckout ? cart.paypalOrderId : null}
-            donationCents={donation.ok ? donation.cents : null}
-            disabled={lines.length === 0 || !donation.ok || releasing !== null || startingOver}
-          />
+          <CheckoutProvider key={namespace} clientId={clientId} merchantIds={merchantIds} namespace={namespace}>
+            <CheckoutButtons
+              cartId={cart.cartId}
+              initialOrderId={inCheckout ? cart.paypalOrderId : null}
+              donationCents={donation.ok ? donation.cents : null}
+              disabled={lines.length === 0 || !donation.ok || releasing !== null || startingOver}
+            />
+          </CheckoutProvider>
         </div>
       ) : (
         <p className="rounded-sticker bg-paper-deep p-3 text-sm text-ink-soft">Checkout is not set up here yet.</p>

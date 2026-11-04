@@ -125,7 +125,6 @@ export function makePayPalOrganizerTools(
     clientSecret: options.clientSecret,
     configuration: {
       actions: {
-        transactions: { ...ORGANIZER_PAYPAL_ACTIONS.transactions },
         orders: { ...ORGANIZER_PAYPAL_ACTIONS.orders },
         payments: { ...ORGANIZER_PAYPAL_ACTIONS.payments },
       },

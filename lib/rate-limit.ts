@@ -1,6 +1,6 @@
 /**
- * Best-effort, in-memory rate limit for /api/scan: per user, a minimum gap between calls
- * plus a cap per rolling window. State lives in this module, so it is per server instance
+ * Best-effort, in-memory rate limit for the model-backed routes: per user, a minimum gap
+ * between calls plus a cap per rolling window. State lives in this module, so it is per server instance
  * only: a cold start forgets it and two instances do not share it. It stops a phone left
  * on auto-scan (or a stuck loop) from hammering the API; it is not abuse protection.
  */
@@ -62,6 +62,20 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
 /** The limiter /api/scan uses: 1.2 s between scans, 60 scans per 10 minutes. */
 export const scanRateLimiter = createRateLimiter({
   minIntervalMs: 1200,
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+});
+
+/** The limiter /api/pricing uses: one photo every 3 s, 30 per 10 minutes (each is a large vision call). */
+export const pricingRateLimiter = createRateLimiter({
+  minIntervalMs: 3000,
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+});
+
+/** The limiter /api/assistant/shop uses: one turn a second, 60 per 10 minutes. */
+export const shopRateLimiter = createRateLimiter({
+  minIntervalMs: 1000,
   windowMs: 10 * 60 * 1000,
   max: 60,
 });

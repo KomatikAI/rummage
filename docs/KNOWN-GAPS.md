@@ -8,8 +8,10 @@ who closes it and where.
 - **The SQL has never run.** The four migrations and `supabase/seed.sql` were self-reviewed only.
   First spike step: `supabase link`, `supabase db push`, load the seed, replace the three
   `SANDBOX_SELLER_*` merchant ids and set `organizer_merchant_id`. See `supabase/README.md`.
-- **No scheduled release of expired holds.** `release_expired_holds()` runs only from the organizer
-  dashboard button. Add a cron line (the README has it) once the project exists.
+- **Scheduled release of expired holds needs `pg_cron`.** The Nov 4 migration schedules
+  `release_expired_holds()` every minute when it can enable `pg_cron`, and `hold_item` frees an
+  expired hold on the item it is asked for. If the migration prints a notice that `pg_cron` is not
+  available, add the cron line from the README another way.
 
 ## Checkout
 
@@ -44,7 +46,8 @@ who closes it and where.
 - **Placement is coarse.** The box is the model's estimate, mapped through the video's `object-cover`
   crop. The sticker sits below the item, above it, or over its centre, clamped to the screen, and can
   land a little off.
-- **The rate limit is per server instance.** It is an in-memory map (one scan per 1.2 s, 60 per 10
+- **The rate limits are per server instance.** Scan, pricing and the shopping assistant share an
+  in-memory limiter in `lib/rate-limit.ts` (one scan per 1.2 s, 60 per 10
   minutes per user), so several instances each allow that much. A shared store would close this.
 - **Never tried on a real phone or against the real API.** Every test uses a fake model client and a
   fake database. Camera start, the photo fallback and the model's boxes are untested on hardware.

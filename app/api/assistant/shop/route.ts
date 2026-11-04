@@ -2,6 +2,7 @@ import { convertToModelMessages, safeValidateUIMessages } from "ai";
 import { z } from "zod";
 
 import { runShoppingAssistant } from "@/lib/ai/shopping-assistant";
+import { shopRateLimiter } from "@/lib/rate-limit";
 import { createRepos, currentUserId, ensureLiveCart, RepoError } from "@/lib/repos";
 import { jsonError, readJsonBody } from "@/lib/repos/http";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -18,9 +19,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_MESSAGES = 100;
 
+// Only user and assistant turns come from the browser. A client-authored system message
+// would replace the shopping prompt once convertToModelMessages turned it into a real one.
+const clientMessageSchema = z.looseObject({ role: z.enum(["user", "assistant"]) });
+
 const bodySchema = z.object({
   saleId: z.uuid(),
-  messages: z.array(z.unknown()).min(1).max(MAX_MESSAGES),
+  messages: z.array(clientMessageSchema).min(1).max(MAX_MESSAGES),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -51,6 +56,12 @@ export async function POST(request: Request): Promise<Response> {
     if (cart.status === "checkout") {
       // hold_item / release_hold only work on an open cart; the buyer is mid-payment.
       return jsonError(409, "cart_in_checkout", { cartPath: "/buyer/cart" });
+    }
+
+    // Counted only for a turn that reaches the model.
+    const verdict = shopRateLimiter.check(userId);
+    if (!verdict.ok) {
+      return jsonError(429, "slow_down", { retryAfterMs: verdict.retryAfterMs });
     }
 
     const messages = await convertToModelMessages(validated.data);
