@@ -26,17 +26,23 @@ describe("findSecrets", () => {
       j("PAYPAL_CLIENT", "_SECRET=abc123"),
       j("export SUPABASE_SERVICE", "_ROLE_KEY='abc'"),
       j("ANTHROPIC_API", '_KEY = "abc"'),
+      j("OPENROUTER_API", "_KEY=abc"),
     ]) {
       expect(findSecrets(line)).toEqual([{ line: 1, pattern: "secret variable assignment" }]);
     }
+  });
+
+  it("flags an OpenRouter key by its prefix, wherever it appears", () => {
+    expect(findSecrets(j("const key = 'sk-or", "-v1-abc'"))).toEqual([{ line: 1, pattern: "OpenRouter API key" }]);
   });
 
   it("allows empty assignments, names and comparisons", () => {
     const text = [
       j("PAYPAL_CLIENT", "_SECRET="),
       j("ANTHROPIC_API", '_KEY=""'),
+      j("OPENROUTER_API", '_KEY=""'),
       j("SUPABASE_SERVICE", "_ROLE_KEY= # filled in locally"),
-      "Set ANTHROPIC_API_KEY in .env.local.",
+      "Set OPENROUTER_API_KEY in .env.local.",
       j("if (process.env.ANTHROPIC_API", '_KEY === "x") {}'),
     ].join("\n");
     expect(findSecrets(text)).toEqual([]);

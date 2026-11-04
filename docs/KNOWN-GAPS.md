@@ -41,7 +41,7 @@ who closes it and where.
   does not stream.
 - **The PayPal read-only tools attach only when the PayPal env vars are set.** The env is validated
   per group (`ENV_GROUPS` in `lib/env.ts`), so a page that only reads Supabase renders without the
-  PayPal or Anthropic keys; the organizer assistant itself still needs the PayPal group to show
+  PayPal or OpenRouter keys; the organizer assistant itself still needs the PayPal group to show
   order and refund data.
 
 ## Scan

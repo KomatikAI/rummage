@@ -12,7 +12,7 @@ const validEnv = {
   NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
-  ANTHROPIC_API_KEY: "test-anthropic-key",
+  OPENROUTER_API_KEY: "test-openrouter-key",
   APP_URL: "http://localhost:3000",
 };
 
@@ -35,8 +35,8 @@ describe("parseServerEnv", () => {
   });
 
   it("throws on an empty value", () => {
-    expect(() => parseServerEnv({ ...validEnv, ANTHROPIC_API_KEY: "" })).toThrow(
-      /ANTHROPIC_API_KEY is required/,
+    expect(() => parseServerEnv({ ...validEnv, OPENROUTER_API_KEY: "" })).toThrow(
+      /OPENROUTER_API_KEY is required/,
     );
   });
 
@@ -49,13 +49,13 @@ describe("parseServerEnv", () => {
 
 describe("parseEnvGroup", () => {
   it("checks only the group's keys", () => {
-    const { ANTHROPIC_API_KEY: _omitted, ...rest } = validEnv;
+    const { OPENROUTER_API_KEY: _omitted, ...rest } = validEnv;
     void _omitted;
     expect(parseEnvGroup("supabase", rest)).toEqual({
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
     });
-    expect(() => parseEnvGroup("anthropic", rest)).toThrow(/\(anthropic\):[\s\S]*ANTHROPIC_API_KEY is required/);
+    expect(() => parseEnvGroup("openrouter", rest)).toThrow(/\(openrouter\):[\s\S]*OPENROUTER_API_KEY is required/);
   });
 
   it("ties every PayPal value to the sandbox check", () => {
@@ -64,13 +64,13 @@ describe("parseEnvGroup", () => {
 });
 
 describe("env getter", () => {
-  it("serves a public page's Supabase values without the PayPal or Anthropic keys", () => {
+  it("serves a public page's Supabase values without the PayPal or OpenRouter keys", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", validEnv.NEXT_PUBLIC_SUPABASE_URL);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", validEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
     vi.stubEnv("PAYPAL_CLIENT_ID", "");
     expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
-    expect(() => env.ANTHROPIC_API_KEY).toThrow(/ANTHROPIC_API_KEY is required/);
+    expect(() => env.OPENROUTER_API_KEY).toThrow(/OPENROUTER_API_KEY is required/);
     expect(() => env.PAYPAL_CLIENT_ID).toThrow(/PAYPAL_ENV must be "sandbox"/);
   });
 

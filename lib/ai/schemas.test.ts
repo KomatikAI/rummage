@@ -3,7 +3,6 @@ import {
   hasAtMostTwoDecimals,
   ListingDraft,
   listingDraftJsonSchema,
-  listingDraftOutputFormat,
   LISTING_CATEGORIES,
 } from "./schemas";
 import { validDraft } from "./test-utils";
@@ -125,12 +124,5 @@ describe("listingDraftJsonSchema", () => {
 
   it("allows null for prohibited_reason", () => {
     expect(schema.properties.prohibited_reason.anyOf).toContainEqual({ type: "null" });
-  });
-
-  it("is wrapped as a json_schema output format", () => {
-    expect(listingDraftOutputFormat).toEqual({
-      type: "json_schema",
-      schema: listingDraftJsonSchema,
-    });
   });
 });

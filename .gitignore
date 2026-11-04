@@ -45,3 +45,6 @@ next-env.d.ts
 
 # seed photo originals (large, not committed)
 scripts/seed/photos-raw/
+
+# vercel link output
+.vercel

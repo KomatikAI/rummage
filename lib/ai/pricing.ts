@@ -1,15 +1,21 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { env } from "@/lib/env";
-import { ListingDraft, listingDraftOutputFormat } from "./schemas";
+import type { LanguageModel, ModelMessage } from "ai";
+
+import {
+  generateStructured,
+  openRouterModel,
+  PRICING_MODEL,
+  type StructuredCall,
+  type StructuredFailureCode,
+} from "./openrouter";
+import { ListingDraft, listingDraftJsonSchema } from "./schemas";
 
 /**
  * Photo pricing: one seller photo in, one zod-validated `ListingDraft` out.
  * The draft is guidance for the seller, who always sets the final price.
  */
 
-export const PRICING_MODEL = "claude-opus-5-5";
-/** Server-side fallback beta: a refused request is retried on a fallback model. */
-export const PRICING_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+export { PRICING_MODEL };
+export const PRICING_EFFORT = "medium" as const;
 export const PRICING_MAX_TOKENS = 16000;
 
 export type PricingMediaType =
@@ -28,29 +34,12 @@ export interface PriceFromPhotoInput {
   saleContext?: string;
 }
 
-type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
-type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
-
-/** The slice of the Anthropic client pricing uses; tests pass a fake. */
-export interface PricingClient {
-  beta: {
-    messages: {
-      create(params: CreateParams): PromiseLike<BetaMessage>;
-    };
-  };
-}
-
 export interface PricingDeps {
-  client?: PricingClient;
+  /** Override the model; tests pass a `MockLanguageModelV4`. */
+  model?: LanguageModel;
 }
 
-export type PricingErrorCode =
-  | "refusal"
-  | "max_tokens"
-  | "context_window_exceeded"
-  | "no_output"
-  | "invalid_json"
-  | "invalid_output";
+export type PricingErrorCode = StructuredFailureCode;
 
 export class PricingError extends Error {
   readonly code: PricingErrorCode;
@@ -102,43 +91,25 @@ function buildUserText(input: PriceFromPhotoInput): string {
   return parts.join("\n\n");
 }
 
-/** Builds the exact Messages API request; exported so tests can inspect it. */
-export function buildPricingRequest(input: PriceFromPhotoInput): CreateParams {
-  return {
-    model: PRICING_MODEL,
-    max_tokens: PRICING_MAX_TOKENS,
-    betas: [PRICING_FALLBACK_BETA],
-    fallbacks: "default",
-    thinking: { type: "adaptive" },
-    output_config: {
-      effort: "medium",
-      format: listingDraftOutputFormat,
+/** Builds the exact request; exported so tests can inspect it. */
+export function buildPricingRequest(input: PriceFromPhotoInput): StructuredCall {
+  const messages: ModelMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "file", data: input.imageBase64, mediaType: input.mediaType },
+        { type: "text", text: buildUserText(input) },
+      ],
     },
+  ];
+  return {
     system: PRICING_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: input.mediaType,
-              data: input.imageBase64,
-            },
-          },
-          { type: "text", text: buildUserText(input) },
-        ],
-      },
-    ],
+    messages,
+    maxOutputTokens: PRICING_MAX_TOKENS,
+    effort: PRICING_EFFORT,
+    schemaName: "listing_draft",
+    schema: listingDraftJsonSchema,
   };
-}
-
-let defaultClient: PricingClient | undefined;
-
-function getDefaultClient(): PricingClient {
-  defaultClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  return defaultClient;
 }
 
 /** Prices one item from one photo. Throws `PricingError` on any unusable reply. */
@@ -149,56 +120,16 @@ export async function priceFromPhoto(
   if (!input.imageBase64) {
     throw new PricingError("no_output", "imageBase64 is empty");
   }
-  const client = deps.client ?? getDefaultClient();
-  const response = await client.beta.messages.create(buildPricingRequest(input));
-
-  switch (response.stop_reason) {
-    case "refusal":
-      throw new PricingError("refusal", "Claude declined to price this photo", {
-        stopReason: response.stop_reason,
-        stopDetails: response.stop_details,
-      });
-    case "max_tokens":
-      throw new PricingError(
-        "max_tokens",
-        "The pricing reply was cut off at max_tokens",
-        { stopReason: response.stop_reason },
-      );
-    case "model_context_window_exceeded":
-      throw new PricingError(
-        "context_window_exceeded",
-        "The pricing request exceeded the model context window",
-        { stopReason: response.stop_reason },
-      );
-    default:
-      break;
-  }
-
-  const text = response.content
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("");
-  if (!text.trim()) {
-    throw new PricingError("no_output", "The pricing reply had no text block", {
-      stopReason: response.stop_reason,
+  const model = deps.model ?? openRouterModel(PRICING_MODEL);
+  const result = await generateStructured(model, buildPricingRequest(input), (raw) =>
+    ListingDraft.safeParse(raw),
+  );
+  if (!result.ok) {
+    throw new PricingError(result.code, `Pricing: ${result.message}`, {
+      stopReason: result.stopReason,
+      stopDetails: result.code === "refusal" ? result.details : undefined,
+      issues: result.code === "invalid_output" ? result.details : undefined,
     });
   }
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw new PricingError("invalid_json", "The pricing reply was not valid JSON", {
-      stopReason: response.stop_reason,
-    });
-  }
-
-  const parsed = ListingDraft.safeParse(raw);
-  if (!parsed.success) {
-    throw new PricingError(
-      "invalid_output",
-      "The pricing reply did not match the ListingDraft schema",
-      { stopReason: response.stop_reason, issues: parsed.error.issues },
-    );
-  }
-  return parsed.data;
+  return result.value;
 }

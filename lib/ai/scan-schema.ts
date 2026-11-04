@@ -51,13 +51,7 @@ function withoutSchemaKey(schema: JsonObject): Record<string, unknown> {
   return rest;
 }
 
-/** JSON schema for `output_config.format`, generated with `z.toJSONSchema` (inlined). */
+/** JSON schema sent as the response format, generated with `z.toJSONSchema` (inlined). */
 export const scanReplyJsonSchema = withoutSchemaKey(
   z.toJSONSchema(ScanReply, { reused: "inline", io: "output" }) as JsonObject,
 );
-
-/** The exact `output_config.format` value sent with a scan request. */
-export const scanReplyOutputFormat = {
-  type: "json_schema" as const,
-  schema: scanReplyJsonSchema,
-};

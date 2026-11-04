@@ -10,8 +10,7 @@ Recorded at scaffold time (2026-10-27) with `npm ls`.
 | react | 19.3.0 |
 | react-dom | 19.3.0 |
 | ai | 7.0.155 |
-| @ai-sdk/anthropic | 4.0.90 |
-| @anthropic-ai/sdk | 1.3.0 |
+| @openrouter/ai-sdk-provider | 3.1.0 |
 | @paypal/agent-toolkit | 1.11.0 (kept) |
 | zod | 4.6.7 |
 | @supabase/supabase-js | 2.118.0 |

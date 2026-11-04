@@ -1,11 +1,9 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { generateText, isStepCount, tool, type LanguageModel, type Tool } from "ai";
 import { z } from "zod";
-import { env } from "@/lib/env";
+import { ASSISTANT_MODEL, openRouterModel } from "./openrouter";
 import { ORGANIZER_PAYPAL_TOOL_NAMES } from "./paypal-readonly";
 import {
-  anthropicCallOptions,
-  ASSISTANT_MODEL,
+  assistantCallOptions,
   summarizeToolCalls,
   type AssistantDeps,
 } from "./shopping-assistant";
@@ -129,8 +127,7 @@ function assertReadOnlyPayPalTools(paypalTools: Record<string, Tool>): void {
 
 function resolveModel(deps: AssistantDeps): LanguageModel {
   if (deps.model) return deps.model;
-  const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  return anthropic(ASSISTANT_MODEL);
+  return openRouterModel(ASSISTANT_MODEL);
 }
 
 /** Answers one organizer question. Non-streaming: answers are short. */
@@ -150,7 +147,7 @@ export async function runOrganizerAssistant(
     prompt: input.question,
     tools,
     stopWhen: isStepCount(ORGANIZER_MAX_STEPS),
-    providerOptions: { anthropic: anthropicCallOptions },
+    providerOptions: assistantCallOptions,
   });
   return {
     result,

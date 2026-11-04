@@ -3,6 +3,9 @@
  * `MockLanguageModelV4` results. Not exported from `index.ts`.
  */
 
+import type { LanguageModelV4CallOptions, LanguageModelV4FinishReason, LanguageModelV4GenerateResult } from "@ai-sdk/provider";
+import { MockLanguageModelV4 } from "ai/test";
+
 export const validDraft = {
   title: "Wooden high chair",
   description: "Solid wood high chair with tray. Light scuffs on the legs.",
@@ -29,6 +32,41 @@ export function textResult(text: string) {
     usage: mockUsage,
     warnings: [],
   };
+}
+
+/** A reply of `text` ending for `reason`, as the structured-output modules see it. */
+export function finishedResult(text: string, reason: LanguageModelV4FinishReason["unified"]) {
+  return { ...textResult(text), finishReason: { unified: reason, raw: undefined } };
+}
+
+/**
+ * A mock model for the structured-output modules (pricing, screen, scan). It accepts
+ * https image URLs as-is so the SDK never tries to download a candidate photo, and it
+ * records every call in `doGenerateCalls`. Pass an `Error` to make the call throw.
+ */
+export function structuredModel(result: LanguageModelV4GenerateResult | Error) {
+  return new MockLanguageModelV4({
+    provider: "openrouter",
+    modelId: "mock",
+    supportedUrls: { "image/*": [/^https?:\/\//] },
+    doGenerate: async () => {
+      if (result instanceof Error) throw result;
+      return result;
+    },
+  });
+}
+
+/** The content parts of the single user message a structured call sends. */
+export function userParts(call: LanguageModelV4CallOptions): Array<Record<string, unknown>> {
+  const user = call.prompt.find((message) => message.role === "user");
+  if (!user || typeof user.content === "string") throw new Error("expected a user message with parts");
+  return user.content as unknown as Array<Record<string, unknown>>;
+}
+
+/** The system prompt a structured call sends. */
+export function systemText(call: LanguageModelV4CallOptions): string | undefined {
+  const system = call.prompt.find((message) => message.role === "system");
+  return system && typeof system.content === "string" ? system.content : undefined;
 }
 
 let callCounter = 0;
