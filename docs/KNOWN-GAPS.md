@@ -10,8 +10,9 @@ who closes it and where.
   `SANDBOX_SELLER_*` merchant ids and set `organizer_merchant_id`. See `supabase/README.md`.
 - **Scheduled release of expired holds needs `pg_cron`.** The Nov 4 migration schedules
   `release_expired_holds()` every minute when it can enable `pg_cron`, and `hold_item` frees an
-  expired hold on the item it is asked for. If the migration prints a notice that `pg_cron` is not
-  available, add the cron line from the README another way.
+  expired hold on the item it is asked for, and create-order runs the sweep before it claims a
+  cart, so an expired line is never charged. If the migration prints a notice that `pg_cron` is
+  not available, add the cron line from the README another way.
 
 ## Checkout
 

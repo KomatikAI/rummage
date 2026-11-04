@@ -3,7 +3,7 @@ import { z } from "zod";
 import { priceFromPhoto, PricingError, type PricingMediaType } from "@/lib/ai/pricing";
 import { currentUserId } from "@/lib/repos";
 import { pricingRateLimiter } from "@/lib/rate-limit";
-import { contentLength, jsonError, readJsonBody } from "@/lib/repos/http";
+import { jsonError, readBodyBytes, readJsonBody } from "@/lib/repos/http";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -86,13 +86,18 @@ async function fromJson(request: Request): Promise<Parsed> {
 }
 
 async function fromMultipart(request: Request): Promise<Parsed> {
-  const declared = contentLength(request);
-  if (declared !== null && declared > MAX_MULTIPART_BODY_BYTES) {
-    return { ok: false, response: jsonError(413, "image_too_large", { maxBytes: MAX_IMAGE_BYTES }) };
+  // Read the body ourselves so a missing or false content-length cannot make
+  // request.formData() buffer an unbounded upload before the size check runs.
+  const body = await readBodyBytes(request, MAX_MULTIPART_BODY_BYTES);
+  if (!body.ok) {
+    return body.reason === "too_large"
+      ? { ok: false, response: jsonError(413, "image_too_large", { maxBytes: MAX_IMAGE_BYTES }) }
+      : { ok: false, response: jsonError(400, "invalid_form") };
   }
   let form: FormData;
   try {
-    form = await request.formData();
+    const contentType = request.headers.get("content-type") ?? "";
+    form = await new Response(body.bytes, { headers: { "content-type": contentType } }).formData();
   } catch {
     return { ok: false, response: jsonError(400, "invalid_form") };
   }
