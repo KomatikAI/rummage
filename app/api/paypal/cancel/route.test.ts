@@ -14,7 +14,7 @@ const URL_ = "https://rummage.test/api/paypal/cancel";
 const CART = "c0000000-0000-4000-8000-000000000001";
 const BUYER = "u0000000-0000-4000-8000-0000000000b1";
 
-const checkoutCart = { id: CART, buyer_user_id: BUYER, status: "checkout", paypal_order_id: "ORDER-1" };
+const checkoutCart = { id: CART, buyer_user_id: BUYER, status: "checkout", paypal_order_id: "ORDER-1", capture_attempts: 0 };
 const pendingUnits = [
   { capture_id: null, capture_status: null },
   { capture_id: null, capture_status: null },

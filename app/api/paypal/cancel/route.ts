@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<Response> {
   const admin = createSupabaseAdminClient();
   const cart = await admin
     .from("carts")
-    .select("id, buyer_user_id, status, paypal_order_id")
+    .select("id, buyer_user_id, status, paypal_order_id, capture_attempts")
     .eq("id", cartId)
     .maybeSingle();
   if (cart.error) return databaseError("load cart", cart.error);
@@ -42,6 +42,7 @@ export async function POST(request: Request): Promise<Response> {
     status: cart.data.status,
     paypalOrderId: cart.data.paypal_order_id,
     units: units.data ?? [],
+    captureAttempts: cart.data.capture_attempts,
   });
   switch (decision.kind) {
     case "already_open":

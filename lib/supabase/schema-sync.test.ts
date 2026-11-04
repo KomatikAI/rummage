@@ -115,7 +115,8 @@ describe("migration vs types.ts", () => {
       const grants = [...migrationSql.matchAll(/grant execute on function public\.([a-z_]+\([^)]*\)) to ([^;]+);/g)]
         .filter((m) => m[1] === fn)
         .map((m) => m[2]);
-      expect(grants, fn).toEqual(["service_role"]);
+      // A later migration that recreates the function re-grants it; only the role set matters.
+      expect([...new Set(grants)], fn).toEqual(["service_role"]);
     }
   });
 

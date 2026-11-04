@@ -2,8 +2,10 @@ import type { Tool } from "ai";
 import { z } from "zod";
 
 import { runOrganizerAssistant } from "@/lib/ai/organizer-tools";
+import { scopePayPalToolsToSale, type SalePayPalIds } from "@/lib/ai/paypal-sale-scope";
 import { createRepos, currentUserId, RepoError } from "@/lib/repos";
 import { jsonError, readJsonBody } from "@/lib/repos/http";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
@@ -13,7 +15,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * message is the question (UI messages with text parts, or `{ role, content }`). Only the
  * sale's organizer (`sales.organizer_user_id`) may ask: 401 signed out, 403 otherwise.
  * PayPal sandbox read-only tools are attached only when PAYPAL_CLIENT_ID and
- * PAYPAL_CLIENT_SECRET are both set.
+ * PAYPAL_CLIENT_SECRET are both set, and only for the order and refund ids of this sale:
+ * they run with the platform credentials, so the route, not the model, draws the line.
  */
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -62,6 +65,23 @@ async function paypalToolsFromEnv(): Promise<Record<string, Tool> | undefined> {
   }
 }
 
+/** The PayPal order and refund ids that belong to one sale, read with the service role. */
+async function salePayPalIds(saleId: string): Promise<SalePayPalIds | null> {
+  const admin = createSupabaseAdminClient();
+  const carts = await admin.from("carts").select("id, paypal_order_id").eq("sale_id", saleId);
+  if (carts.error) return null;
+  const cartIds = (carts.data ?? []).map((cart) => cart.id);
+  const units =
+    cartIds.length > 0
+      ? await admin.from("purchase_units").select("refund_id").in("cart_id", cartIds)
+      : { data: [], error: null };
+  if (units.error) return null;
+  return {
+    orderIds: new Set((carts.data ?? []).flatMap((cart) => (cart.paypal_order_id ? [cart.paypal_order_id] : []))),
+    refundIds: new Set((units.data ?? []).flatMap((unit) => (unit.refund_id ? [unit.refund_id] : []))),
+  };
+}
+
 export async function POST(request: Request): Promise<Response> {
   const db = await createSupabaseServerClient();
   const userId = await currentUserId(db);
@@ -90,7 +110,12 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const repos = await createRepos(saleId, db);
-    const paypalTools = await paypalToolsFromEnv();
+    let paypalTools = await paypalToolsFromEnv();
+    if (paypalTools) {
+      const ids = await salePayPalIds(saleId);
+      // No ids means the lookup failed; answer from sale records rather than unscoped tools.
+      paypalTools = ids ? scopePayPalToolsToSale(paypalTools, ids) : undefined;
+    }
     const answer = await runOrganizerAssistant({
       question,
       repo: repos.sale,

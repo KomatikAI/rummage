@@ -74,7 +74,9 @@ export async function POST(request: Request): Promise<Response> {
       captureId,
       merchantId: unit.data.merchant_id,
       ...(reason ? { noteToPayer: reason } : {}),
-      requestId: `refund-${captureId}`,
+      // A retry after a FAILED or CANCELLED refund needs a fresh idempotency key, or PayPal
+      // replays the failed request. The previous refund id is unique to that attempt.
+      requestId: unit.data.refund_id ? `refund-${captureId}-${unit.data.refund_id}` : `refund-${captureId}`,
     });
   } catch (error) {
     const mapped = paypalErrorResponse(error, "refund");

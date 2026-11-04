@@ -103,7 +103,7 @@ export interface OrganizerAssistantInput {
 
 export function organizerSystemPrompt(hasPayPalTools: boolean): string {
   const sources = hasPayPalTools
-    ? "the sale records (sale_summary, household_statuses, fundraiser_total) and PayPal sandbox transaction data (list_transactions, get_order, get_refund)"
+    ? "the sale records (sale_summary, household_statuses, fundraiser_total) and PayPal sandbox order and refund data for this sale (get_order, get_refund)"
     : "the sale records (sale_summary, household_statuses, fundraiser_total)";
   return `You answer a yard-sale organizer's questions about their sale.
 

@@ -46,7 +46,10 @@ function setup(options: Options = {}) {
     return undefined;
   });
   const admin = fakeDb((q: FakeQuery) => {
-    if (q.table === "items" && q.action === "insert") return ok({ id: "item-flagged" });
+    if (q.table === "items" && q.action === "insert") {
+      const status = (q.payload as { status?: string } | undefined)?.status;
+      return ok({ id: status === "listed" ? "item-listed" : "item-flagged" });
+    }
     return undefined;
   });
   const downloads: string[] = [];
@@ -79,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("createItem prohibited-item screen", () => {
-  it("lists an allowed item with the seller's own client after screening the stored photo", async () => {
+  it("lists an allowed item with the service role, marked screened, after screening the stored photo", async () => {
     const { user, admin, downloads } = setup();
     vi.mocked(screenListing).mockResolvedValue({ prohibited: false, reason: null, checked: true });
     await expect(createItem(input)).resolves.toEqual({ ok: true, itemId: "item-listed" });
@@ -91,9 +94,11 @@ describe("createItem prohibited-item screen", () => {
       imageBase64: Buffer.from(JPEG).toString("base64"),
       mediaType: "image/jpeg",
     });
-    expect(inserts(user)).toEqual([expect.objectContaining({ status: "listed", photo_path: PHOTO })]);
-    expect(inserts(user)[0]).not.toHaveProperty("prohibited_flag");
-    expect(inserts(admin)).toEqual([]);
+    expect(inserts(admin)).toEqual([
+      expect.objectContaining({ status: "listed", photo_path: PHOTO, screened_at: expect.any(String) }),
+    ]);
+    expect(inserts(admin)[0]).not.toHaveProperty("prohibited_flag");
+    expect(inserts(user)).toEqual([]);
   });
 
   it("stores a flagged item as a draft with the service role and returns the reason", async () => {

@@ -13,6 +13,12 @@ export type CancelInput = {
   status: CartStatus;
   paypalOrderId: string | null;
   units: readonly CancelUnit[];
+  /**
+   * carts.capture_attempts. The capture route bumps it before it calls PayPal, and a unit
+   * gets its capture id and status only after PayPal answers, so a non-zero count is the
+   * only sign of a capture still in flight.
+   */
+  captureAttempts: number;
 };
 
 export type CancelDecision =
@@ -20,7 +26,7 @@ export type CancelDecision =
   | { kind: "cancel" }
   /** Already open with no order: nothing to do, answer as if cancelled. */
   | { kind: "already_open" }
-  /** PayPal recorded a capture (of any status) for a unit: finish with capture instead. */
+  /** A capture was attempted or recorded (of any status) for a unit: finish with capture instead. */
   | { kind: "capture_started" }
   /** Paid, partial, failed, abandoned, or an open cart that still names an order. */
   | { kind: "not_in_checkout" };
@@ -34,9 +40,9 @@ export function captureStarted(unit: CancelUnit): boolean {
   return unit.capture_status !== null || unit.capture_id !== null;
 }
 
-export function decideCancel({ status, paypalOrderId, units }: CancelInput): CancelDecision {
+export function decideCancel({ status, paypalOrderId, units, captureAttempts }: CancelInput): CancelDecision {
   if (status === "open") return paypalOrderId === null ? { kind: "already_open" } : { kind: "not_in_checkout" };
   if (status !== "checkout") return { kind: "not_in_checkout" };
-  if (units.some(captureStarted)) return { kind: "capture_started" };
+  if (captureAttempts > 0 || units.some(captureStarted)) return { kind: "capture_started" };
   return { kind: "cancel" };
 }

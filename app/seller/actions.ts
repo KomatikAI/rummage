@@ -171,9 +171,11 @@ export async function createItem(input: NewItemInput): Promise<CreateItemResult>
     return { ok: false, error: `${refused} We kept it as a draft that buyers cannot see.` };
   }
 
-  const { data, error } = await db
+  // Listed with the service role: only the server can set screened_at, and the database
+  // refuses a client write to 'listed' without it. Ownership was checked above.
+  const { data, error } = await admin
     .from("items")
-    .insert({ ...row, status: "listed" })
+    .insert({ ...row, status: "listed", screened_at: new Date().toISOString() })
     .select("id")
     .single();
   if (error || !data) return { ok: false, error: itemWriteErrorMessage(error ?? {}) };
@@ -208,9 +210,76 @@ export async function updateItem(_previous: EditItemState, formData: FormData): 
   if (!db) return { values, error: SIGNED_OUT };
 
   const { itemId, title, description, price } = parsed.data;
-  const { data, error } = await db
+
+  const current = await db
     .from("items")
-    .update({ title, description, price })
+    .select("household_id, title, description, category, photo_path, status")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (current.error) return { values, error: "We could not save that just now. Try again." };
+  if (!current.data) return { values, error: await noRowMessage(db, itemId) };
+
+  const textChanged =
+    current.data.title !== title || (current.data.description ?? null) !== (description ?? null);
+
+  // A price-only edit keeps the screen that already passed.
+  if (!textChanged) {
+    const { data, error } = await db
+      .from("items")
+      .update({ price })
+      .eq("id", itemId)
+      .in("status", EDITABLE)
+      .select("id");
+    if (error) return { values, error: itemWriteErrorMessage(error) };
+    if (!data || data.length === 0) return { values, error: await noRowMessage(db, itemId) };
+    revalidateSeller();
+    return { saved: true, values };
+  }
+
+  // New words: screen again on the server, then write with the service role, which alone
+  // can set screened_at. The select policy also lets organizers read, so check the owner.
+  const userId = await currentUserId(db);
+  const owner = await db
+    .from("households")
+    .select("id")
+    .eq("id", current.data.household_id)
+    .eq("owner_user_id", userId ?? "")
+    .maybeSingle();
+  if (owner.error) return { values, error: "We could not check your table just now. Try again." };
+  if (!owner.data) return { values, error: "We could not find that item. It may have been deleted." };
+
+  const admin = createSupabaseAdminClient();
+  let image: { imageBase64: string; mediaType: PricingMediaType } | undefined;
+  if (current.data.photo_path) {
+    const photo = await readPhotoForScreen(admin, current.data.photo_path);
+    if (!photo.ok) return { values, error: photo.error };
+    image = { imageBase64: photo.imageBase64, mediaType: photo.mediaType };
+  }
+
+  const screen = await screenListing({
+    title,
+    description,
+    category: current.data.category,
+    ...(image ?? {}),
+  });
+  if (!screen.checked) {
+    return { values, error: "We could not check this item just now. Try again; your changes are still here." };
+  }
+
+  if (screen.prohibited) {
+    const reason = screen.reason ?? SCREEN_DEFAULT_REASON;
+    await admin
+      .from("items")
+      .update({ title, description, price, status: "draft", prohibited_flag: true, prohibited_reason: reason, screened_at: null })
+      .eq("id", itemId)
+      .in("status", EDITABLE);
+    revalidateSeller();
+    return { values, error: `This item cannot be listed at this sale. ${reason} We moved it to a draft that buyers cannot see.` };
+  }
+
+  const { data, error } = await admin
+    .from("items")
+    .update({ title, description, price, screened_at: new Date().toISOString() })
     .eq("id", itemId)
     .in("status", EDITABLE)
     .select("id");

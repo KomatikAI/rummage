@@ -95,7 +95,7 @@ The bucket `item-photos` is public-read: anyone can load a photo by its public U
 
 ## Expiring holds
 
-`hold_item` holds an item for 15 minutes. Run `public.release_expired_holds()` every minute with the service role. It returns expired holds in open carts to `listed`. It abandons checkout carts that have not been touched for 3 hours and returns their items to `listed`. It also relists orphaned holds. With `pg_cron` enabled:
+`hold_item` holds an item for 15 minutes. Run `public.release_expired_holds()` every minute with the service role. It returns expired holds in open carts to `listed`. It abandons checkout carts that have not been touched for 3 hours and returns their items to `listed`, but never a cart whose capture has started (any purchase unit with a capture id or status). It also relists orphaned holds. `hold_item` also frees an expired hold on the item it is asked for, so a buyer is never blocked by a hold that ran out. Migration `20261104120000_hold_and_listing_fixes.sql` schedules the sweep with `pg_cron` when the extension can be enabled; otherwise schedule it yourself:
 
 ```sql
 select cron.schedule('rummage-release-expired-holds', '* * * * *',

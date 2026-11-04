@@ -95,7 +95,7 @@ Tools are keyed by method name, not action name. Some names do not read like the
 
 ### Read-only tools
 
-The organizer set is three actions, all reads: `transactions.list` (`list_transactions`), `orders.get` (`get_order`) and `payments.getRefunds` (`get_refund`). `makePayPalOrganizerTools` throws if the toolkit ever returns anything else, and `runOrganizerAssistant` refuses any PayPal tool outside that list.
+The organizer set is two actions, both reads: `orders.get` (`get_order`) and `payments.getRefunds` (`get_refund`). `transactions.list` was dropped on Nov 4: the tools run with the platform credentials and a transaction list cannot be narrowed to one sale. `makePayPalOrganizerTools` throws if the toolkit ever returns anything else, `runOrganizerAssistant` refuses any PayPal tool outside that list, and the organizer route wraps both tools with `scopePayPalToolsToSale` so only the sale's own order and refund ids are looked up.
 
 Other reads exist but are not enabled: `invoices.list/get/search`, `products.list/show`, `subscriptionPlans.list/show`, `subscriptions.show`, `shipment.get`, `disputes.list/get`, `insights.get`. Everything else creates, sends, cancels, captures, refunds or accepts. In particular `orders.capture` (`pay_order`), `payments.createRefund` and `disputes.create` move money or concede a dispute.
 

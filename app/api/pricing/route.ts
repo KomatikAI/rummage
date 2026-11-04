@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { priceFromPhoto, PricingError, type PricingMediaType } from "@/lib/ai/pricing";
 import { currentUserId } from "@/lib/repos";
+import { pricingRateLimiter } from "@/lib/rate-limit";
 import { contentLength, jsonError, readJsonBody } from "@/lib/repos/http";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -135,6 +136,12 @@ export async function POST(request: Request): Promise<Response> {
     ? await fromMultipart(request)
     : await fromJson(request);
   if (!parsed.ok) return parsed.response;
+
+  // Counted only for a valid photo: this is what guards the model budget.
+  const verdict = pricingRateLimiter.check(userId);
+  if (!verdict.ok) {
+    return jsonError(429, "slow_down", { retryAfterMs: verdict.retryAfterMs });
+  }
 
   try {
     const draft = await priceFromPhoto(parsed.input);
