@@ -10,7 +10,7 @@ import { Badge, Button, ButtonLink, cn, EmptyState, formatMoney, Input, Money, S
 import type { ItemCategory } from "@/lib/supabase/types";
 
 import { cartSubtotal, liveLines } from "./cart";
-import { useNow } from "./clock";
+import { useServerNow } from "./clock";
 import { signInHref, type ActionResult } from "./hold-messages";
 import { ItemPhoto } from "./item-photo";
 import {
@@ -29,6 +29,8 @@ export interface SaleBrowserProps {
   signedIn: boolean;
   /** The signed-in buyer's live cart in this sale, or null. */
   cart: { itemIds: string[]; lines: { price: number; holdExpiresAt: string }[] } | null;
+  /** Date.now() on the server when the page rendered; the cart pill drops holds by its clock. */
+  serverNow: number;
 }
 
 type View = "list" | "map";
@@ -46,9 +48,9 @@ const chipClasses = (active: boolean) =>
   );
 
 /** The public sale page body: List | Map, search, category chips, item sheet and cart pill. */
-export function SaleBrowser({ sale, items, signedIn, cart }: SaleBrowserProps) {
+export function SaleBrowser({ sale, items, signedIn, cart, serverNow }: SaleBrowserProps) {
   const router = useRouter();
-  const now = useNow();
+  const now = useServerNow(serverNow);
   const [view, setView] = useState<View>("list");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ItemCategory | null>(null);

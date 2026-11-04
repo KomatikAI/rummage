@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
+import { SELLER_TEXT_NOTE,
   itemIdInput,
   makeShoppingTools,
   searchItemsInput,
@@ -79,7 +79,7 @@ describe("makeShoppingTools", () => {
       nearLngLat: [-83.0, 40.0],
       radiusM: 2000,
     });
-    expect(result).toEqual({ items: [item] });
+    expect(result).toEqual({ items: [item], note: SELLER_TEXT_NOTE });
   });
 
   it("search_items omits optional args the model did not send", async () => {

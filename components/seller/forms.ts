@@ -34,13 +34,16 @@ export const MAX_LABEL_LENGTH = 80;
 
 const PRICE_RE = /^\d+(\.\d{1,2})?$/;
 
-/** "12", "12.5", "$12.50" or "1,200" -> dollars. Null when it is not a usable price. */
+/**
+ * "12", "12.5", "$12.50" or "1,200" -> dollars. Null when it is not a usable price:
+ * a price is more than $0 (items_price_positive in the schema) and at most MAX_PRICE.
+ */
 export function parsePrice(raw: string): number | null {
   const clean = raw.trim().replace(/^\$/, "").replace(/,/g, "").trim();
   if (!PRICE_RE.test(clean)) return null;
-  const value = Number(clean);
-  if (!Number.isFinite(value) || value > MAX_PRICE) return null;
-  return Math.round(value * 100) / 100;
+  const value = Math.round(Number(clean) * 100) / 100;
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_PRICE) return null;
+  return value;
 }
 
 /** A price for an input field: 12 -> "12", 12.5 -> "12.50". */
@@ -56,7 +59,7 @@ const priceField = z
   .transform((raw, ctx) => {
     const value = parsePrice(raw);
     if (value === null) {
-      ctx.addIssue({ code: "custom", message: "Use dollars, like 5 or 12.50, up to $100,000." });
+      ctx.addIssue({ code: "custom", message: "Use dollars above zero, like 5 or 12.50, up to $100,000." });
       return z.NEVER;
     }
     return value;

@@ -110,11 +110,11 @@ You can also call it from a server route or Vercel cron through the admin client
 |---|---|
 | Anyone (anon or signed in) | Read `public_sales` and `public_listings`. These views show jittered `public_lng`/`public_lat` only, never `exact_*` |
 | Organizer | Create a sale and update their own (including `fundraiser_goal`); read its households and items; read money totals and the paid order count only through `organizer_sale_summary(p_sale)` |
-| Seller | Join a sale with `join_sale(invite_token, label)`; read, update (`label`, `exact_*`, `paused`) and delete their own household; create, read, update and delete its items. Items in `held`, `sold` or `collected` are locked. Sellers read their household's `purchase_units` without `pickup_code`, and confirm a pickup with `mark_item_collected(item, code)` |
+| Seller | Join a sale with `join_sale(invite_token, label)`; read their sale's public columns (never its `invite_token` or `organizer_merchant_id`); read, update (`label`, `exact_*`, `paused`) and delete their own household; create, read, update and delete its items. Items in `held`, `sold` or `collected` are locked. Sellers read their household's `purchase_units` without `pickup_code`, and confirm a pickup with `mark_item_collected(item, code)` |
 | Buyer | Create their own cart; hold and release items only through `hold_item` and `release_hold`; read their own carts, lines and purchase units (without `pickup_code`); get exact locations and pickup codes only through `get_my_pickups()`, and only for captures that are `COMPLETED` |
 | Service role | Everything else: PayPal order creation, captures (`mark_units_captured`), refunds, webhook events, PayPal onboarding status (`paypal_status` plus `paypal_payments_receivable` and `paypal_email_confirmed`), moderation flags |
 
-Client roles have column-level grants on `purchase_units`. A client `select("*")` on that table fails, so list the columns, as `PURCHASE_UNIT_CLIENT_COLUMNS` in `lib/supabase/types.ts` does.
+Client roles have column-level grants on `purchase_units` and `sales`. A client `select("*")` on those tables fails, so list the columns, as `PURCHASE_UNIT_CLIENT_COLUMNS` in `lib/supabase/types.ts` does. On `sales` the client list leaves out `invite_token` and `organizer_merchant_id`; the organizer page reads them with the admin client after its RLS check.
 
 ### Household cap (PayPal's 10 purchase units)
 

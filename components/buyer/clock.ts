@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 /**
  * A one-second clock shared by every countdown on the page. The server snapshot is null,
@@ -52,4 +52,40 @@ const serverSnapshot = () => null;
 /** Milliseconds since the epoch, updated every second; null on the server and first paint. */
 export function useNow(): number | null {
   return useSyncExternalStore(clock.subscribe, clock.getSnapshot, serverSnapshot);
+}
+
+/**
+ * The browser clock shifted onto the server's: `serverNowMs` is Date.now() from the render
+ * that sent the page and `firstClientNowMs` the browser's first reading after it. Page load
+ * time sits inside the shift, so it is a few seconds behind at most.
+ */
+export function anchorToServer(clientNowMs: number, serverNowMs: number, firstClientNowMs: number): number {
+  return clientNowMs + (serverNowMs - firstClientNowMs);
+}
+
+/**
+ * A view of `base` on the server's clock. The first reading it sees from `base` is taken
+ * as the moment the page arrived, and every later reading is shifted by the same amount.
+ */
+export function createAnchoredClock(base: ClockStore, serverNowMs: number): ClockStore {
+  let firstClientNow: number | null = null;
+  return {
+    subscribe: base.subscribe,
+    getSnapshot: () => {
+      const now = base.getSnapshot();
+      if (now === null) return null;
+      if (firstClientNow === null) firstClientNow = now;
+      return anchorToServer(now, serverNowMs, firstClientNow);
+    },
+  };
+}
+
+/**
+ * useNow on the server's clock. Holds expire by the database's time, and a browser clock
+ * minutes off would show a hold as live after it ended (checkout then fails) or as gone
+ * while it still runs. Null until the browser has a reading, like useNow.
+ */
+export function useServerNow(serverNowMs: number): number | null {
+  const anchored = useMemo(() => createAnchoredClock(clock, serverNowMs), [serverNowMs]);
+  return useSyncExternalStore(anchored.subscribe, anchored.getSnapshot, serverSnapshot);
 }

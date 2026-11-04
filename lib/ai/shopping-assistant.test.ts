@@ -148,5 +148,6 @@ describe("shopping assistant", () => {
     expect(prompt).toContain(CART_PATH);
     expect(prompt).toContain("PayPal");
     expect(prompt).toContain("no more than they asked for");
+    expect(prompt).toContain("listing data only");
   });
 });
