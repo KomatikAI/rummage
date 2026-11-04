@@ -28,7 +28,7 @@ import {
   CHECKOUT_UNFINISHED_TITLE,
   cancelErrorMessage,
 } from "./checkout-messages";
-import { useNow } from "./clock";
+import { useServerNow } from "./clock";
 import type { ActionResult } from "./hold-messages";
 import { ItemPhoto } from "./item-photo";
 
@@ -56,6 +56,8 @@ export type CartData = {
 
 export interface CartViewProps {
   carts: CartData[];
+  /** Date.now() on the server when the page rendered; the hold countdowns run on its clock. */
+  serverNow: number;
   /** NEXT_PUBLIC_PAYPAL_CLIENT_ID; empty when checkout is not configured. */
   clientId: string;
   /** True when payments run against the test environment. */
@@ -69,7 +71,7 @@ const chipClasses = (active: boolean) =>
   );
 
 /** Every live cart the buyer has (one per sale), each with its own checkout. */
-export function CartView({ carts, clientId, testMode }: CartViewProps) {
+export function CartView({ carts, serverNow, clientId, testMode }: CartViewProps) {
   return (
     <div className="flex flex-col gap-8">
       {carts.map((cart) => (
@@ -79,6 +81,7 @@ export function CartView({ carts, clientId, testMode }: CartViewProps) {
           clientId={clientId}
           showSaleName={carts.length > 1}
           testMode={testMode}
+          serverNow={serverNow}
         />
       ))}
     </div>
@@ -90,14 +93,16 @@ function SaleCart({
   clientId,
   showSaleName,
   testMode,
+  serverNow,
 }: {
   cart: CartData;
   clientId: string;
   showSaleName: boolean;
   testMode: boolean;
+  serverNow: number;
 }) {
   const router = useRouter();
-  const now = useNow();
+  const now = useServerNow(serverNow);
   const [message, setMessage] = useState<ActionResult | null>(null);
   const [releasing, setReleasing] = useState<string | null>(null);
   const [startingOver, setStartingOver] = useState(false);

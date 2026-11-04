@@ -7,6 +7,7 @@ import { SetSaleName } from "@/components/sale-name";
 import { ButtonLink, EmptyState, PageContainer, PageHeader, Spinner } from "@/components/ui";
 import { env } from "@/lib/env";
 import { currentUserId } from "@/lib/repos";
+import { pageRenderedAt } from "@/lib/server-time";
 import { getPublicListings } from "@/lib/supabase/queries";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -112,7 +113,13 @@ async function SaleContent({ params }: { params: PageProps<"/sale/[slug]">["para
       {items.length === 0 ? (
         <EmptyState title="No items yet" description="Sellers are still setting out their tables. Check back soon." />
       ) : (
-        <SaleBrowser sale={{ id: sale.id, slug: sale.slug }} items={items} signedIn={userId !== null} cart={cart} />
+        <SaleBrowser
+          sale={{ id: sale.id, slug: sale.slug }}
+          items={items}
+          signedIn={userId !== null}
+          cart={cart}
+          serverNow={pageRenderedAt()}
+        />
       )}
     </>
   );

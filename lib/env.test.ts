@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { env, getEnv, parseServerEnv, resetEnvCache } from "./env";
+import { env, getEnv, parseEnvGroup, parseServerEnv, resetEnvCache } from "./env";
 
 const validEnv = {
   PAYPAL_ENV: "sandbox",
@@ -47,7 +47,33 @@ describe("parseServerEnv", () => {
   });
 });
 
+describe("parseEnvGroup", () => {
+  it("checks only the group's keys", () => {
+    const { ANTHROPIC_API_KEY: _omitted, ...rest } = validEnv;
+    void _omitted;
+    expect(parseEnvGroup("supabase", rest)).toEqual({
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
+    });
+    expect(() => parseEnvGroup("anthropic", rest)).toThrow(/\(anthropic\):[\s\S]*ANTHROPIC_API_KEY is required/);
+  });
+
+  it("ties every PayPal value to the sandbox check", () => {
+    expect(() => parseEnvGroup("paypal", { ...validEnv, PAYPAL_ENV: "live" })).toThrow(/PAYPAL_ENV must be "sandbox"/);
+  });
+});
+
 describe("env getter", () => {
+  it("serves a public page's Supabase values without the PayPal or Anthropic keys", () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", validEnv.NEXT_PUBLIC_SUPABASE_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", validEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    vi.stubEnv("PAYPAL_CLIENT_ID", "");
+    expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
+    expect(() => env.ANTHROPIC_API_KEY).toThrow(/ANTHROPIC_API_KEY is required/);
+    expect(() => env.PAYPAL_CLIENT_ID).toThrow(/PAYPAL_ENV must be "sandbox"/);
+  });
+
   it("loads lazily from process.env and caches", () => {
     for (const [key, value] of Object.entries(validEnv)) vi.stubEnv(key, value);
     expect(env.PAYPAL_BN_CODE).toBe("TEST_BN_CODE");

@@ -25,12 +25,11 @@ describe("parsePrice", () => {
     ["12.5", 12.5],
     ["$12.50", 12.5],
     [" 1,200 ", 1200],
-    ["0", 0],
   ])("reads %s", (raw, expected) => {
     expect(parsePrice(raw)).toBe(expected);
   });
 
-  it.each(["", "abc", "-5", "1.234", "12.", "100001", "1e3"])("refuses %s", (raw) => {
+  it.each(["", "abc", "-5", "0", "0.00", "$0", "1.234", "12.", "100001", "1e3"])("refuses %s", (raw) => {
     expect(parsePrice(raw)).toBeNull();
   });
 

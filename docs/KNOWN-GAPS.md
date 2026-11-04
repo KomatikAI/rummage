@@ -36,8 +36,10 @@ who closes it and where.
 
 - **The organizer assistant keeps only the latest message per turn.** Its runner takes one question and
   does not stream.
-- **The PayPal read-only tools attach only when the PayPal env vars are set**, and the whole env is
-  validated at once, so in practice the organizer assistant needs the full `.env.local`.
+- **The PayPal read-only tools attach only when the PayPal env vars are set.** The env is validated
+  per group (`ENV_GROUPS` in `lib/env.ts`), so a page that only reads Supabase renders without the
+  PayPal or Anthropic keys; the organizer assistant itself still needs the PayPal group to show
+  order and refund data.
 
 ## Scan
 
@@ -55,6 +57,16 @@ who closes it and where.
   the API fetches itself. Photos served by a local Supabase (`127.0.0.1`) cannot be fetched, so local
   scans match on titles and descriptions only, and usually miss. Use the hosted project.
 - **One very full table is cut to 24 items**, available ones first. Items past that cannot be matched.
+
+## Dependencies
+
+- **`npm audit` reports high findings inside `@paypal/agent-toolkit`.** Version 1.11.0 (the latest)
+  pins its own `ai@4`, `zod@3`, `openai@4`, `mathjs`, `uuid@10` and `@langchain/core`, and the
+  advisories are against those nested copies, not the app's `ai@7` and `zod@4`. `npm audit fix
+  --force` would downgrade the toolkit to 1.3.5, which predates the actions this app uses. The
+  toolkit is loaded only by the organizer assistant, only when the PayPal env vars are set, and
+  only its two read actions are exposed (`lib/ai/paypal-readonly.ts`). Re-run the audit when the
+  toolkit publishes a release on current dependencies.
 
 ## Schema wishes not yet acted on
 

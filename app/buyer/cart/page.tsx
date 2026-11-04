@@ -8,6 +8,7 @@ import { canDonate } from "@/components/buyer/sale-info";
 import { Badge, ButtonLink, EmptyState, PageContainer, PageHeader, Spinner } from "@/components/ui";
 import { env } from "@/lib/env";
 import { currentUserId } from "@/lib/repos";
+import { pageRenderedAt } from "@/lib/server-time";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient, type RummageClient } from "@/lib/supabase/server";
 import type { CartStatus } from "@/lib/supabase/types";
@@ -209,7 +210,12 @@ async function CartContent() {
           action={<ButtonLink href={`/sale/${DEMO_SALE_SLUG}`}>Browse the sale</ButtonLink>}
         />
       ) : (
-        <CartView carts={carts} clientId={env.NEXT_PUBLIC_PAYPAL_CLIENT_ID} testMode={env.PAYPAL_ENV === "sandbox"} />
+        <CartView
+          carts={carts}
+          serverNow={pageRenderedAt()}
+          clientId={env.NEXT_PUBLIC_PAYPAL_CLIENT_ID}
+          testMode={env.PAYPAL_ENV === "sandbox"}
+        />
       )}
 
       {pastOrders.length > 0 ? (
