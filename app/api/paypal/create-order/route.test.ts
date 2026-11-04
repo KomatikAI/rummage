@@ -182,6 +182,8 @@ describe("POST /api/paypal/create-order checkout", () => {
     // The cart is claimed with a status guard.
     const claim = db.queries.find((q) => q.table === "carts" && q.action === "update");
     expect(eqValue(claim!, "status")).toBe("open");
+    // Expired holds are released before the lines are read, so none of them is charged.
+    expect(db.rpcs.map((call) => call.fn)).toContain("release_expired_holds");
   });
 
   it("adds the donation unit for a fundraiser sale", async () => {

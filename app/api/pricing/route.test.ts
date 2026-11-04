@@ -143,6 +143,36 @@ describe("POST /api/pricing", () => {
     expect((await postForm(big)).status).toBe(413);
   });
 
+  it("stops reading an oversized multipart stream that declares no content-length", async () => {
+    // A streamed body with no length header: the limit has to come from counting bytes.
+    const boundary = "----rummage-test";
+    const head = Buffer.from(
+      `--${boundary}\r\ncontent-disposition: form-data; name="image"; filename="big.jpg"\r\ncontent-type: image/jpeg\r\n\r\n`,
+    );
+    const chunk = Buffer.alloc(1024 * 1024);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent === 0) controller.enqueue(head);
+        controller.enqueue(chunk);
+        sent += chunk.byteLength;
+        if (sent > 20 * FIVE_MB) controller.close();
+      },
+    });
+    const res = await POST(
+      new Request("http://localhost/api/pricing", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body: stream,
+        // @ts-expect-error -- Node's fetch needs this for a streamed request body.
+        duplex: "half",
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(sent).toBeLessThan(2 * FIVE_MB);
+    expect(priceFromPhoto).not.toHaveBeenCalled();
+  });
+
   it("maps PricingError: refusal -> 422, others -> 502; unknown errors -> 500", async () => {
     vi.mocked(priceFromPhoto).mockRejectedValueOnce(new PricingError("refusal", "declined"));
     expect((await postJson({ imageBase64: smallPng, mediaType: "image/png" })).status).toBe(422);

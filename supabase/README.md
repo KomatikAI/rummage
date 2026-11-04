@@ -102,7 +102,9 @@ select cron.schedule('rummage-release-expired-holds', '* * * * *',
   $$select public.release_expired_holds()$$);
 ```
 
-You can also call it from a server route or Vercel cron through the admin client: `admin.rpc("release_expired_holds")`.
+You can also call it from a server route or Vercel cron through the admin client: `admin.rpc("release_expired_holds")`. `POST /api/paypal/create-order` calls it before claiming the cart, so lines whose hold ran out are released rather than charged even when the schedule is behind.
+
+A seller's `photo_path` must be under `households/<their household id>/` (migration `20261104140000_photo_path_ownership.sql`). The client-write trigger refuses anything else, so a seller cannot point an item at another household's photo. Service-role writes, including the seed's `seed/*.jpg` paths, are not checked.
 
 ## Access model
 

@@ -68,6 +68,11 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(409, "cart_not_open", `The cart is ${cart.data.status} and cannot start a checkout.`);
   }
 
+  // Release holds that ran out before the sweep got to them. getCart already hides such
+  // lines from the buyer; without this they would still be charged.
+  const swept = await admin.rpc("release_expired_holds");
+  if (swept.error) return databaseError("release expired holds", swept.error);
+
   // Claim the cart first: hold_item only adds lines to open carts, so the lines read
   // below cannot change underneath us, and a second create-order gets a 409.
   const claimed = await admin
