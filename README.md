@@ -15,7 +15,7 @@ Rummage is an open source app for community sales: neighborhood yard sales, swap
 1. Clone the repository.
 2. Install dependencies: `npm ci`
 3. Copy `.env.example` to `.env.local`.
-4. Fill in your PayPal sandbox app credentials, your Supabase project values and your Anthropic API key in `.env.local`. Keep `PAYPAL_ENV=sandbox`.
+4. Fill in your PayPal sandbox app credentials, your Supabase project values and your OpenRouter API key in `.env.local`. Keep `PAYPAL_ENV=sandbox`.
 5. Start the dev server: `npm run dev`
 
 Other scripts: `npm test` (vitest), `npm run lint`, `npm run build`, `npm run check-secrets` (the same check the pre-commit hook runs on staged files).
@@ -29,7 +29,7 @@ Sandbox buyer and seller logins are listed in [docs/TESTING.md](docs/TESTING.md)
 - **Next.js App Router** (TypeScript, Tailwind CSS), deployed on Vercel.
 - **Supabase** for data, auth and photo storage.
 - **PayPal**: Orders v2 with one purchase unit per seller (multi-seller checkout), Partner Referrals for seller onboarding, Webhooks for payment events, and the PayPal Agent Toolkit for assistant tools. Route handlers live under `app/api/paypal/`, client code under `lib/paypal/`.
-- **Claude** (Anthropic) for photo pricing, the shopping assistant and the organizer assistant (`lib/ai/`).
+- **OpenAI GPT-6 via OpenRouter** (Terra for photo pricing and the prohibited-item screen, Luna for scan matching and the two assistants) through the AI SDK (`lib/ai/`).
 - **MapLibre GL** with **OpenFreeMap** tiles for the sale map.
 
 ## Sandbox only

@@ -1,7 +1,6 @@
-import type Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import type { PricingClient } from "./pricing";
+import { SCAN_MODEL } from "./openrouter";
 import {
   buildScanRequest,
   candidateLabel,
@@ -11,37 +10,11 @@ import {
   SCAN_EFFORT,
   SCAN_MAX_CANDIDATES,
   SCAN_MAX_TOKENS,
-  SCAN_MODEL,
   ScanMatchError,
   type ScanCandidate,
 } from "./scan-match";
 import { scanReplyJsonSchema } from "./scan-schema";
-
-type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
-type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
-type Block = Anthropic.Beta.Messages.BetaContentBlockParam;
-
-function fakeMessage(overrides: Partial<BetaMessage> & { text?: string }): BetaMessage {
-  const { text, ...rest } = overrides;
-  return {
-    id: "msg_test",
-    type: "message",
-    role: "assistant",
-    model: "claude-opus-5-5",
-    content: text === undefined ? [] : [{ type: "text", text, citations: null }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    stop_details: null,
-    usage: { input_tokens: 1, output_tokens: 1 },
-    ...rest,
-  } as unknown as BetaMessage;
-}
-
-function fakeClient(response: BetaMessage) {
-  const create = vi.fn<(params: CreateParams) => Promise<BetaMessage>>(async () => response);
-  const client: PricingClient = { beta: { messages: { create } } };
-  return { client, create };
-}
+import { finishedResult, structuredModel, textResult, userParts } from "./test-utils";
 
 function candidate(n: number, overrides: Partial<ScanCandidate> = {}): ScanCandidate {
   return {
@@ -63,66 +36,50 @@ function input(candidates: ScanCandidate[]) {
   return { frameBase64: FRAME, mediaType: "image/jpeg" as const, candidates };
 }
 
-function reply(value: unknown): string {
-  return JSON.stringify(value);
+function scanReply(value: unknown) {
+  return structuredModel(textResult(JSON.stringify(value)));
 }
 
 const NO_MATCH = { match: null, alternatives: [], not_listed: null };
 
-function userContent(params: CreateParams): Block[] {
-  const message = params.messages[0];
-  if (!message || !Array.isArray(message.content)) throw new Error("expected block content");
-  // buildScanRequest only ever sends content blocks.
-  return message.content as Block[];
+function userContent(candidates: ScanCandidate[]): Array<Record<string, unknown>> {
+  return buildScanRequest(input(candidates)).messages[0].content as Array<Record<string, unknown>>;
 }
 
 describe("buildScanRequest", () => {
-  it("sends model, effort, adaptive thinking, the fallback beta and the schema", () => {
-    const params = buildScanRequest(input([candidate(1)]));
-    expect(params.model).toBe(SCAN_MODEL);
-    expect(params.model).toBe("claude-opus-5-5");
-    expect(params.max_tokens).toBe(SCAN_MAX_TOKENS);
-    expect(params.betas).toEqual(["server-side-fallback-2026-07-01"]);
-    expect(params.fallbacks).toBe("default");
-    expect(params.thinking).toEqual({ type: "adaptive" });
-    expect(params.output_config).toEqual({
-      effort: SCAN_EFFORT,
-      format: { type: "json_schema", schema: scanReplyJsonSchema },
-    });
+  it("uses Luna with low effort, the token cap and the strict schema", () => {
+    const call = buildScanRequest(input([candidate(1)]));
+    expect(SCAN_MODEL).toBe("openai/gpt-6-luna");
+    expect(call.maxOutputTokens).toBe(SCAN_MAX_TOKENS);
+    expect(call.effort).toBe(SCAN_EFFORT);
     expect(SCAN_EFFORT).toBe("low");
-    expect(typeof params.system).toBe("string");
-    expect(params.messages).toHaveLength(1);
-    expect(params.messages[0]?.role).toBe("user");
+    expect(call.schemaName).toBe("scan_reply");
+    expect(call.schema).toBe(scanReplyJsonSchema);
+    expect(typeof call.system).toBe("string");
+    expect(call.messages).toHaveLength(1);
+    expect(call.messages[0]?.role).toBe("user");
   });
 
   it("orders label, photo per candidate, then the frame, then the instruction", () => {
-    const content = userContent(buildScanRequest(input([candidate(1), candidate(2)])));
-    expect(content.map((block) => block.type)).toEqual(["text", "image", "text", "image", "image", "text"]);
+    const content = userContent([candidate(1), candidate(2)]);
+    expect(content.map((part) => part.type)).toEqual(["text", "file", "text", "file", "file", "text"]);
     expect(content[0]).toMatchObject({ type: "text", text: expect.stringMatching(/^Item 1: id=item-1, title=Item 1, price=\$5\.00/) });
-    expect(content[1]).toMatchObject({ type: "image", source: { type: "url", url: "https://photos.example.test/item-1.jpg" } });
+    expect(content[1]).toEqual({ type: "file", data: new URL("https://photos.example.test/item-1.jpg"), mediaType: "image/*" });
     expect(content[2]).toMatchObject({ type: "text", text: expect.stringMatching(/^Item 2: id=item-2/) });
-    expect(content[4]).toEqual({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: FRAME } });
+    expect(content[4]).toEqual({ type: "file", data: FRAME, mediaType: "image/jpeg" });
     expect(content[5]).toMatchObject({ type: "text" });
   });
 
-  it("puts the only cache breakpoint on the last candidate block", () => {
-    const content = userContent(buildScanRequest(input([candidate(1), candidate(2)])));
-    const marked = content.flatMap((block, index) => ("cache_control" in block && block.cache_control ? [index] : []));
-    expect(marked).toEqual([3]);
-    expect(content[3]).toMatchObject({ type: "image", cache_control: { type: "ephemeral" } });
-  });
-
   it("keeps the label but skips the image for a candidate without a photo", () => {
-    const content = userContent(buildScanRequest(input([candidate(1), candidate(2, { photoUrl: null })])));
-    expect(content.map((block) => block.type)).toEqual(["text", "image", "text", "image", "text"]);
-    expect(content[2]).toMatchObject({ type: "text", cache_control: { type: "ephemeral" } });
+    const content = userContent([candidate(1), candidate(2, { photoUrl: null })]);
+    expect(content.map((part) => part.type)).toEqual(["text", "file", "text", "file", "text"]);
     expect((content[2] as { text: string }).text).toContain("(no photo)");
   });
 
-  it("says nothing is listed when there are no candidates, without a breakpoint", () => {
-    const content = userContent(buildScanRequest(input([])));
-    expect(content.map((block) => block.type)).toEqual(["text", "image", "text"]);
-    expect(content.some((block) => "cache_control" in block && block.cache_control)).toBe(false);
+  it("says nothing is listed when there are no candidates", () => {
+    const content = userContent([]);
+    expect(content.map((part) => part.type)).toEqual(["text", "file", "text"]);
+    expect(content[0].text).toBe("No items are listed at this table.");
   });
 });
 
@@ -194,18 +151,22 @@ describe("sanitizeScanReply", () => {
 });
 
 describe("matchFrameToListings", () => {
-  it("returns a sanitized match", async () => {
-    const { client, create } = fakeClient(
-      fakeMessage({
-        text: reply({
-          match: { item_id: "item-2", confidence: "high", box: { x: 0.4, y: 0.3, w: 0.9, h: 0.2 } },
-          alternatives: ["item-1", "made-up"],
-          not_listed: null,
-        }),
-      }),
-    );
-    const result = await matchFrameToListings(input([candidate(1), candidate(2)]), { client });
-    expect(create).toHaveBeenCalledTimes(1);
+  it("returns a sanitized match and sends photo URLs through untouched", async () => {
+    const model = scanReply({
+      match: { item_id: "item-2", confidence: "high", box: { x: 0.4, y: 0.3, w: 0.9, h: 0.2 } },
+      alternatives: ["item-1", "made-up"],
+      not_listed: null,
+    });
+    const result = await matchFrameToListings(input([candidate(1), candidate(2)]), { model });
+    expect(model.doGenerateCalls).toHaveLength(1);
+    const call = model.doGenerateCalls[0];
+    expect(call.responseFormat).toMatchObject({ type: "json", name: "scan_reply", schema: scanReplyJsonSchema });
+    expect(call.maxOutputTokens).toBe(SCAN_MAX_TOKENS);
+    expect(call.providerOptions).toEqual({ openrouter: { reasoning: { effort: "low" } } });
+    const parts = userParts(call);
+    expect(parts.map((part) => part.type)).toEqual(["text", "file", "text", "file", "file", "text"]);
+    expect(parts[1]).toMatchObject({ data: { type: "url", url: new URL("https://photos.example.test/item-1.jpg") } });
+    expect(parts[4]).toMatchObject({ mediaType: "image/jpeg", data: { type: "data", data: FRAME } });
     expect(result).toEqual({
       match: { itemId: "item-2", confidence: "high", box: { x: 0.4, y: 0.3, w: 0.6, h: 0.2 } },
       alternatives: ["item-1"],
@@ -214,66 +175,59 @@ describe("matchFrameToListings", () => {
   });
 
   it("returns an estimate when nothing matched", async () => {
-    const { client } = fakeClient(
-      fakeMessage({ text: reply({ match: null, alternatives: [], not_listed: { title: "Desk fan", price_low: 5, price_high: 10 } }) }),
-    );
-    const result = await matchFrameToListings(input([candidate(1)]), { client });
+    const model = scanReply({ match: null, alternatives: [], not_listed: { title: "Desk fan", price_low: 5, price_high: 10 } });
+    const result = await matchFrameToListings(input([candidate(1)]), { model });
     expect(result).toEqual({ match: null, alternatives: [], notListed: { title: "Desk fan", priceLow: 5, priceHigh: 10 } });
   });
 
-  it(`refuses more than ${SCAN_MAX_CANDIDATES} candidates before calling the API`, async () => {
-    const { client, create } = fakeClient(fakeMessage({ text: reply(NO_MATCH) }));
+  it(`refuses more than ${SCAN_MAX_CANDIDATES} candidates before calling the model`, async () => {
+    const model = scanReply(NO_MATCH);
     const many = Array.from({ length: SCAN_MAX_CANDIDATES + 1 }, (_, i) => candidate(i + 1));
-    await expect(matchFrameToListings(input(many), { client })).rejects.toMatchObject({
+    await expect(matchFrameToListings(input(many), { model })).rejects.toMatchObject({
       name: "ScanMatchError",
       code: "too_many_candidates",
     });
-    expect(create).not.toHaveBeenCalled();
+    expect(model.doGenerateCalls).toHaveLength(0);
     const exactly = many.slice(0, SCAN_MAX_CANDIDATES);
-    await expect(matchFrameToListings(input(exactly), { client })).resolves.toMatchObject({ match: null });
+    await expect(matchFrameToListings(input(exactly), { model })).resolves.toMatchObject({ match: null });
   });
 
   it("refuses an empty frame", async () => {
-    const { client, create } = fakeClient(fakeMessage({ text: reply(NO_MATCH) }));
-    await expect(matchFrameToListings({ ...input([]), frameBase64: "" }, { client })).rejects.toMatchObject({ code: "no_frame" });
-    expect(create).not.toHaveBeenCalled();
+    const model = scanReply(NO_MATCH);
+    await expect(matchFrameToListings({ ...input([]), frameBase64: "" }, { model })).rejects.toMatchObject({ code: "no_frame" });
+    expect(model.doGenerateCalls).toHaveLength(0);
   });
 
   it.each([
-    ["refusal", "refusal"],
-    ["max_tokens", "max_tokens"],
-    ["model_context_window_exceeded", "context_window_exceeded"],
-  ] as const)("maps stop_reason %s to %s", async (stopReason, code) => {
-    const { client } = fakeClient(
-      fakeMessage({ stop_reason: stopReason as BetaMessage["stop_reason"], text: reply(NO_MATCH) }),
-    );
-    const error = await matchFrameToListings(input([candidate(1)]), { client }).catch((e: unknown) => e);
+    ["content-filter", "refusal"],
+    ["length", "max_tokens"],
+  ] as const)("maps a %s stop to %s", async (stopReason, code) => {
+    const model = structuredModel(finishedResult(JSON.stringify(NO_MATCH), stopReason));
+    const error = await matchFrameToListings(input([candidate(1)]), { model }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ScanMatchError);
     expect(error).toMatchObject({ code, stopReason });
   });
 
   it("fails on a reply with no text", async () => {
-    const { client } = fakeClient(fakeMessage({}));
-    await expect(matchFrameToListings(input([candidate(1)]), { client })).rejects.toMatchObject({ code: "no_output" });
+    const model = structuredModel({ ...textResult(""), content: [] });
+    await expect(matchFrameToListings(input([candidate(1)]), { model })).rejects.toMatchObject({ code: "no_output" });
   });
 
   it("fails on invalid JSON", async () => {
-    const { client } = fakeClient(fakeMessage({ text: "{ not json" }));
-    await expect(matchFrameToListings(input([candidate(1)]), { client })).rejects.toMatchObject({ code: "invalid_json" });
+    const model = structuredModel(textResult("{ not json"));
+    await expect(matchFrameToListings(input([candidate(1)]), { model })).rejects.toMatchObject({ code: "invalid_json" });
   });
 
   it("fails on a reply that does not match the schema", async () => {
-    const { client } = fakeClient(
-      fakeMessage({ text: reply({ match: { item_id: "item-1", confidence: "certain", box: null }, alternatives: [], not_listed: null }) }),
-    );
-    const error = await matchFrameToListings(input([candidate(1)]), { client }).catch((e: unknown) => e);
+    const model = scanReply({ match: { item_id: "item-1", confidence: "certain", box: null }, alternatives: [], not_listed: null });
+    const error = await matchFrameToListings(input([candidate(1)]), { model }).catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "invalid_output" });
     expect((error as ScanMatchError).issues).toBeTruthy();
   });
 
   it("rejects extra keys (the schema is strict)", async () => {
-    const { client } = fakeClient(fakeMessage({ text: reply({ ...NO_MATCH, note: "hello" }) }));
-    await expect(matchFrameToListings(input([candidate(1)]), { client })).rejects.toMatchObject({ code: "invalid_output" });
+    const model = scanReply({ ...NO_MATCH, note: "hello" });
+    await expect(matchFrameToListings(input([candidate(1)]), { model })).rejects.toMatchObject({ code: "invalid_output" });
   });
 });
 

@@ -1,26 +1,20 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type { LanguageModel, ModelMessage } from "ai";
 import { z } from "zod";
 
-import { env } from "@/lib/env";
-
-import {
-  PRICING_FALLBACK_BETA,
-  PRICING_MAX_TOKENS,
-  PRICING_MODEL,
-  type PricingClient,
-  type PricingMediaType,
-} from "./pricing";
+import { generateStructured, openRouterModel, SCREEN_MODEL, type StructuredCall } from "./openrouter";
+import { PRICING_MAX_TOKENS, type PricingMediaType } from "./pricing";
 
 /**
  * Server-side prohibited-item screen for a listing, run by the seller's listing action
- * whether or not the seller used "Price it". Same client pattern and model as pricing;
+ * whether or not the seller used "Price it". Same call pattern as pricing;
  * one listing (text, plus the stored photo when it can be sent) in, one verdict out.
  *
  * Fails closed: any API error or unusable reply comes back as prohibited with
  * `SCREEN_UNCHECKED_REASON` and `checked: false`, so nothing unscreened is listed.
  */
 
-export const SCREEN_MODEL = PRICING_MODEL;
+export { SCREEN_MODEL };
+export const SCREEN_EFFORT = "low" as const;
 export const SCREEN_MAX_TOKENS = PRICING_MAX_TOKENS;
 /** The largest photo the screen sends; bigger photos are refused by the caller. */
 export const SCREEN_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -48,13 +42,13 @@ export interface ScreenListingResult {
 }
 
 export interface ScreenListingDeps {
-  client?: PricingClient;
+  /** Override the model; tests pass a `MockLanguageModelV4`. */
+  model?: LanguageModel;
 }
 
-type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 type JsonObject = { [key: string]: unknown };
 
-/** The structured output Claude returns. */
+/** The structured output the model returns. */
 export const ListingScreen = z.object({
   prohibited: z
     .boolean()
@@ -72,16 +66,11 @@ function withoutSchemaKey(schema: JsonObject): Record<string, unknown> {
   return rest;
 }
 
-/** JSON schema for `output_config.format`, generated with `z.toJSONSchema` (inlined). */
+/** JSON schema sent as the response format, generated with `z.toJSONSchema` (inlined). */
 export const listingScreenJsonSchema = withoutSchemaKey(
   z.toJSONSchema(ListingScreen, { reused: "inline", io: "output" }) as JsonObject,
 );
 
-/** The exact `output_config.format` value sent with a screen request. */
-export const listingScreenOutputFormat = {
-  type: "json_schema" as const,
-  schema: listingScreenJsonSchema,
-};
 
 export const SCREEN_SYSTEM_PROMPT = `You check listings for a US community yard sale run by a school or neighborhood group. A seller has written a listing, usually with one photo. Decide whether the sale should refuse the item.
 
@@ -115,28 +104,20 @@ function buildUserText(input: ScreenListingInput): string {
   return lines.join("\n");
 }
 
-/** Builds the exact Messages API request; exported so tests can inspect it. */
-export function buildScreenRequest(input: ScreenListingInput): CreateParams {
-  const content: Anthropic.Beta.Messages.BetaContentBlockParam[] = [];
+/** Builds the exact request; exported so tests can inspect it. */
+export function buildScreenRequest(input: ScreenListingInput): StructuredCall {
+  const content: Extract<ModelMessage, { role: "user" }>["content"] = [];
   if (input.imageBase64 && input.mediaType) {
-    content.push({
-      type: "image",
-      source: { type: "base64", media_type: input.mediaType, data: input.imageBase64 },
-    });
+    content.push({ type: "file", data: input.imageBase64, mediaType: input.mediaType });
   }
   content.push({ type: "text", text: buildUserText(input) });
   return {
-    model: SCREEN_MODEL,
-    max_tokens: SCREEN_MAX_TOKENS,
-    betas: [PRICING_FALLBACK_BETA],
-    fallbacks: "default",
-    thinking: { type: "adaptive" },
-    output_config: {
-      effort: "low",
-      format: listingScreenOutputFormat,
-    },
     system: SCREEN_SYSTEM_PROMPT,
     messages: [{ role: "user", content }],
+    maxOutputTokens: SCREEN_MAX_TOKENS,
+    effort: SCREEN_EFFORT,
+    schemaName: "listing_screen",
+    schema: listingScreenJsonSchema,
   };
 }
 
@@ -161,43 +142,21 @@ function unchecked(why: string): ScreenListingResult {
   return { ...UNCHECKED };
 }
 
-let defaultClient: PricingClient | undefined;
-
-function getDefaultClient(): PricingClient {
-  defaultClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  return defaultClient;
-}
-
 /** Screens one listing. Never throws: an API error or bad reply fails closed. */
 export async function screenListing(
   input: ScreenListingInput,
   deps: ScreenListingDeps = {},
 ): Promise<ScreenListingResult> {
-  let response: Anthropic.Beta.Messages.BetaMessage;
+  let result: Awaited<ReturnType<typeof generateStructured<ListingScreen>>>;
   try {
-    const client = deps.client ?? getDefaultClient();
-    response = await client.beta.messages.create(buildScreenRequest(input));
+    const model = deps.model ?? openRouterModel(SCREEN_MODEL);
+    result = await generateStructured(model, buildScreenRequest(input), (raw) => ListingScreen.safeParse(raw));
   } catch (error) {
     return unchecked(`request failed (${error instanceof Error ? error.name : "unknown error"})`);
   }
+  if (!result.ok) return unchecked(`${result.code}: ${result.message}`);
 
-  if (response.stop_reason === "refusal" || response.stop_reason === "max_tokens" || response.stop_reason === "model_context_window_exceeded") {
-    return unchecked(`stop_reason ${response.stop_reason}`);
-  }
-
-  const text = response.content
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("");
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return unchecked("reply was not JSON");
-  }
-  const parsed = ListingScreen.safeParse(raw);
-  if (!parsed.success) return unchecked("reply did not match the screen schema");
-
-  if (!parsed.data.prohibited) return { prohibited: false, reason: null, checked: true };
-  const reason = parsed.data.reason?.trim();
+  if (!result.value.prohibited) return { prohibited: false, reason: null, checked: true };
+  const reason = result.value.reason?.trim();
   return { prohibited: true, reason: reason ? reason : SCREEN_DEFAULT_REASON, checked: true };
 }

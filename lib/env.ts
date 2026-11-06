@@ -4,7 +4,7 @@ import { z } from "zod";
  * Server-side environment, validated with zod on first access and cached.
  *
  * Validation runs per group, not all at once: a public sale page that only needs the
- * Supabase URL renders without an Anthropic key, while any PayPal value is checked
+ * Supabase URL renders without an OpenRouter key, while any PayPal value is checked
  * together with PAYPAL_ENV. Rummage is sandbox only: reading a PayPal value throws unless
  * PAYPAL_ENV is exactly "sandbox", so a live PayPal key can never be used by mistake.
  */
@@ -24,7 +24,7 @@ export const serverEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.url({ error: "NEXT_PUBLIC_SUPABASE_URL must be a URL" }),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: nonEmpty("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
   SUPABASE_SERVICE_ROLE_KEY: nonEmpty("SUPABASE_SERVICE_ROLE_KEY"),
-  ANTHROPIC_API_KEY: nonEmpty("ANTHROPIC_API_KEY"),
+  OPENROUTER_API_KEY: nonEmpty("OPENROUTER_API_KEY"),
   APP_URL: z.url({ error: "APP_URL must be a URL" }),
 });
 
@@ -47,7 +47,7 @@ export const ENV_GROUPS = {
   ],
   supabase: ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"],
   supabaseAdmin: ["SUPABASE_SERVICE_ROLE_KEY"],
-  anthropic: ["ANTHROPIC_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
   app: ["APP_URL"],
 } as const satisfies Record<string, readonly EnvKey[]>;
 

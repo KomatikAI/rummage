@@ -1,4 +1,3 @@
-import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 import {
   generateText,
   isStepCount,
@@ -8,7 +7,7 @@ import {
   type StepResult,
   type ToolSet,
 } from "ai";
-import { env } from "@/lib/env";
+import { ASSISTANT_MODEL, openRouterModel, reasoningOptions } from "./openrouter";
 import {
   HOLD_MINUTES,
   makeShoppingTools,
@@ -21,15 +20,13 @@ import {
  * pays: no payment tool is registered, and the prompt says so.
  */
 
-export const ASSISTANT_MODEL = "claude-opus-5-5";
+export { ASSISTANT_MODEL };
 /** Upper bound on model steps (each step is one model call, plus its tool calls). */
 export const SHOPPING_MAX_STEPS = 8;
 export const CART_PATH = "/buyer/cart";
 
-export const anthropicCallOptions = {
-  effort: "medium",
-  fallbacks: "default",
-} satisfies AnthropicLanguageModelOptions;
+/** Provider options shared by both assistants: a medium reasoning effort through OpenRouter. */
+export const assistantCallOptions = reasoningOptions("medium");
 
 export interface ShoppingAssistantInput {
   messages: ModelMessage[];
@@ -69,8 +66,7 @@ How you finish:
 
 function resolveModel(deps: AssistantDeps): LanguageModel {
   if (deps.model) return deps.model;
-  const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
-  return anthropic(ASSISTANT_MODEL);
+  return openRouterModel(ASSISTANT_MODEL);
 }
 
 /** Flattens the tool calls of every step into a plain summary list. */
@@ -93,7 +89,7 @@ function buildCall(input: ShoppingAssistantInput, deps: AssistantDeps) {
     messages: input.messages,
     tools: makeShoppingTools(input.repo, { cartId: input.cartId }),
     stopWhen: isStepCount(SHOPPING_MAX_STEPS),
-    providerOptions: { anthropic: anthropicCallOptions },
+    providerOptions: assistantCallOptions,
   };
 }
 

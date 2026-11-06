@@ -18,7 +18,7 @@ export const TEST_ENV = {
   NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
-  ANTHROPIC_API_KEY: "test-anthropic-key",
+  OPENROUTER_API_KEY: "test-openrouter-key",
   APP_URL: "http://localhost:3000",
 } as const;
 
